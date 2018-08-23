@@ -3,4 +3,7 @@ extern crate pulldown_cmark;
 extern crate regex;
 
 mod sidenotes;
-mod wrapper;
+mod parser;
+
+pub use parser::html_from_markdown;
+

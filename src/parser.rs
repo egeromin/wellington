@@ -1,4 +1,4 @@
-use pulldown_cmark::Event;
+use pulldown_cmark::{Event, html, Parser};
 use sidenotes::compile_sidenotes;
 use std::vec::IntoIter;
 
@@ -9,18 +9,27 @@ use std::vec::IntoIter;
 ///
 /// * checks text events for sidenotes, leaving the
 /// others unchanged.
-fn wellington_wrapper(event: Event) -> IntoIter<Event> {
+fn wrapper(event: Event) -> IntoIter<Event> {
     match event {
         Event::Text(text) => compile_sidenotes(&text),
         _ => vec![event].into_iter(),
     }
 }
 
+
+/// Main function to convert markdown to html
+pub fn html_from_markdown(md: &str) -> String {
+    let parser = Parser::new(md);
+
+    let mut html_buf = String::new();
+    html::push_html(&mut html_buf, parser.flat_map(wrapper));
+    html_buf
+}
+
+
 #[cfg(test)]
 mod tests {
-    use pulldown_cmark::{html, Parser};
-
-    use super::wellington_wrapper;
+    use super::html_from_md;
 
     #[test]
     fn check_to_markdown() {
@@ -33,10 +42,7 @@ Here is some text with {sidenotes}.
 * alpha
 * beta
 "#;
-        let parser = Parser::new(markdown_str);
-
-        let mut html_buf = String::new();
-        html::push_html(&mut html_buf, parser.flat_map(wellington_wrapper));
+        let html_buf = html_from_md(markdown_str);
 
         assert_eq!(
             html_buf,
