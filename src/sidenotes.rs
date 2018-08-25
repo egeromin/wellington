@@ -3,6 +3,40 @@ use pulldown_cmark::Event;
 use regex::Regex;
 use std::borrow::Cow;
 use std::vec::IntoIter;
+use std::cmp::{max, min};
+use std::fmt;
+
+
+/// sidenote errors. The possible errors are:
+/// 
+/// * not matched, e.g. "bla { bla" or "bla } {bla}"
+/// * nested, e.g. "{ bla { }"
+#[derive(Debug)]
+pub enum SidenoteError{
+    NotMatched{
+        context: String
+    },
+    Nested {
+        first: String,
+        second: String
+    }
+}
+
+
+impl fmt::Display for SidenoteError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            SidenoteError::NotMatched{context} => {
+                write!(f, "Error: a sidenote delimiter was not matched: ..{}..", context)
+            },
+            SidenoteError::Nested{first, second} => {
+            write!(f, "Error: encountered a nested sidenote: ..{}.. is enclosed by ..{}..",
+                   first, second)
+            }
+        }
+    }
+}
+
 
 /// check that sidenotes are properly formatted.
 /// There shouldn't be any nested curly braces,
@@ -12,35 +46,56 @@ use std::vec::IntoIter;
 ///
 /// * this is correct: "this {has sidenotes} {more than once}"
 /// * this is not: "this {has {nested sidenotes} that don't } match}"
-fn are_sidenotes_formatted(text: &str) -> bool {
-    let mut counter: i32 = 0;
-    for c in text.chars() {
-        if c == '{' {
-            if counter > 0 {
-                return false;
-            }
-            counter += 1;
-        } else if c == '}' {
-            if counter < 1 {
-                return false;
-            }
-            counter -= 1;
-        }
+fn check_sidenote_formatting(text: &str) -> Result<(), SidenoteError> {
+    let mut start: Option<usize> = None;
+    for (i, c) in text.chars().enumerate() {
+        match c {
+            '{' => {
+                match start {
+                    Some(j) => {
+                        return Err(SidenoteError::Nested{
+                            first: String::from(&text[max(j-5,0)..min(j+5,text.len())]),
+                            second: String::from(&text[max(i-5,0)..min(i+5,text.len())]),
+                        });
+                    },
+                    None => {
+                        start = Some(i);
+                    }
+                };
+            },
+            '}' => {
+                match start {
+                    None => {
+                        return Err(SidenoteError::NotMatched{
+                            context: String::from(&text[max(i-5,0)..min(i+5,text.len())]),
+                        });
+                    }
+                    _ => {
+                        start = None;
+                    }
+                };
+            },
+            _ => {}
+        };
     }
-    counter == 0
+    match start {
+        Some(j) => Err(SidenoteError::NotMatched{
+            context: String::from(&text[max(j-5,0)..min(j+5,text.len())]),
+        }),
+        None => Ok(())
+    }
 }
 
 /// compile sidenotes
 /// if correctly formatted, then replace '{' and '}' with tags
 /// otherwise, return text as is
-pub fn compile_sidenotes<'a, 'b: 'a>(text: &'a str) -> IntoIter<Event<'b>> {
-    if !are_sidenotes_formatted(text) {
-        return vec![Event::Text(Cow::from(text.to_string()))].into_iter();
-    }
+pub fn compile_sidenotes(text: Cow<str>) -> Result<IntoIter<Event>, 
+    SidenoteError> {
+    check_sidenote_formatting(&text)?;
 
     let re = Regex::new(r"[{}]").unwrap();
 
-    let text_events = re.split(text)
+    let text_events = re.split(&text)
         .map(String::from)
         .map(Cow::from)
         .map(Event::Text);
@@ -60,10 +115,12 @@ pub fn compile_sidenotes<'a, 'b: 'a>(text: &'a str) -> IntoIter<Event<'b>> {
         .collect::<Vec<Event>>();
 
     all_events.pop(); // remove last item
-    all_events.into_iter()
+    Ok(all_events.into_iter())
 
-    // TODO: modify this function and eliminate unnecessary copies by
-    // taking as argument a `Cow` directly?
+    // TODO: is it possible to modify this function and eliminate unnecessary copies?
+    // I don't see how, because the events own the string slices they refer to
+    // Check the mechanics of Cow and smart pointers, because often the data of the 
+    // Cow is borrowed.
 }
 
 #[cfg(test)]

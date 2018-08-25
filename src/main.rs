@@ -30,7 +30,13 @@ fn main() {
     let input_filename = matches.opt_str("input").expect("Error with filename");
     let input = fs::read_to_string(input_filename).expect("Error reading input file");
 
-    let output = html_from_markdown(&input);
+    let output = match html_from_markdown(&input) {
+        Ok(ht) => ht,
+        Err(err) => {
+            println!("{}", err);
+            std::process::exit(1);
+        }
+    };
 
     let output_filename = matches.opt_str("output").expect("Error with filename");
     fs::write(output_filename, output).expect("Error writing result");
