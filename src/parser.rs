@@ -1,11 +1,13 @@
 use pulldown_cmark::{Event, Tag, html, Parser};
-use sidenotes::{compile_sidenotes, SidenoteError};
-use std::vec::IntoIter;
+use std::borrow::Cow;
 
+use sidenote_error::SidenoteError;
 
-struct SidenoteParser<'a> {
+pub struct SidenoteParser<'a> {
     parser: Parser<'a>,
-    in_code_block: bool
+    pub in_code_block: bool,
+    pub in_sidenote_block: bool,
+    pub remaining_text: String 
 }
 
 
@@ -19,60 +21,84 @@ struct SidenoteParser<'a> {
 /// code block, so as not to parse for sidenotes in that case
 /// * returns the other events unchanged.
 impl<'a> SidenoteParser<'a> {
-    fn new(parser: Parser) -> SidenoteParser {
-        SidenoteParser{parser, in_code_block: false}
+    pub fn new(parser: Parser) -> SidenoteParser {
+        SidenoteParser{
+            parser, 
+            in_code_block: false,
+            in_sidenote_block: false,
+            remaining_text: String::from("")
+        }
     }
-}
+
+    fn parse_code_tag(&mut self, start: bool, on_success_return: Event<'a>) -> 
+        Result<Event<'a>, SidenoteError> {
+        if self.in_sidenote_block {
+            Err(SidenoteError::NotMatched)
+        } else {
+            self.in_code_block = start;
+            Ok(on_success_return)
+        }
+    }
+
+    fn parse_paragraph_tag(&mut self, start: bool) -> 
+        Event<'a> {
+        if self.in_sidenote_block {
+            if start {
+                Event::InlineHtml(Cow::from("<br />\n"))
+            } else { // create empty event
+                Event::Text(Cow::from(""))
+                // TODO: would be cleaner to instead skip this and go straight
+                // to the next event and invoke self.next()
+                // but to do this need to change all return types
+            }
+        } else {
+            if start {
+                Event::Start(Tag::Paragraph)
+            } else {
+                Event::End(Tag::Paragraph)
+            }
+        }
+    }
+
+    fn parse_next_event(&mut self, event: Event<'a>) -> 
+        Result<Event<'a>, SidenoteError> {
+        match event {
+            Event::Text(text) => Ok(self.parse_text_block(text)),
+            Event::Start(tag) => match tag {
+                Tag::Code => self.parse_code_tag(true, Event::Start(Tag::Code)),
+                Tag::CodeBlock(lang) => self.parse_code_tag(true, 
+                    Event::Start(Tag::CodeBlock(lang))),
+                Tag::Paragraph => Ok(self.parse_paragraph_tag(true)),
+                _ => Ok(Event::Start(tag))
+            },
+            Event::End(tag) => match tag {
+                Tag::Code => self.parse_code_tag(false, Event::End(Tag::Code)),
+                Tag::CodeBlock(lang) => self.parse_code_tag(false, 
+                    Event::End(Tag::CodeBlock(lang))),
+                Tag::Paragraph => Ok(self.parse_paragraph_tag(false)),
+                _ => Ok(Event::End(tag))
+            },
+            _ => Ok(event)
+        }
+    }
+} 
 
 
 impl<'a> Iterator for SidenoteParser<'a> {
-    type Item = Result<IntoIter<Event<'a>>, SidenoteError>;
+    type Item = Result<Event<'a>, SidenoteError>;
 
-    fn next(&mut self) -> Option<Result<IntoIter<Event<'a>>, SidenoteError>> {
-        let next_event = self.parser.next();
-        match next_event {
-            Some(event) => {
-                match event {
-                    Event::Text(text) => {
-                        if self.in_code_block {
-                            Some(Ok(vec![Event::Text(text)].into_iter()))
-                        } else {
-                            Some(compile_sidenotes(text))
-                        }
-                    }
-                    Event::Start(tag) => match tag {
-                        Tag::Code => {
-                            self.in_code_block = true;
-                            Some(Ok(vec![Event::Start(Tag::Code)].into_iter()))
-                        },
-                        Tag::CodeBlock(lang) => {
-                            self.in_code_block = true;
-                            Some(Ok(vec![Event::Start(Tag::CodeBlock(lang))].into_iter()))
-                        }
-                        _ => {
-                            Some(Ok(vec![Event::Start(tag)].into_iter()))
-                        }
-                    },
-                    Event::End(tag) => match tag {
-                        Tag::Code => {
-                            self.in_code_block = false;
-                            Some(Ok(vec![Event::End(Tag::Code)].into_iter()))
-                        }
-                        Tag::CodeBlock(lang) => {
-                            self.in_code_block = true;
-                            Some(Ok(vec![Event::End(Tag::CodeBlock(lang))].into_iter()))
-                        }
-                        _ => {
-                            Some(Ok(vec![Event::End(tag)].into_iter()))
-                        }
-                    },
-                    _ => Some(Ok(vec![event].into_iter()))
-                }
-            },
-            None => None
+    fn next(&mut self) -> Option<Result<Event<'a>, SidenoteError>> {
+        if self.remaining_text.len() > 0 {
+            Some(self.parse_remaining_text())
+        } else {
+            let next_event = self.parser.next();
+            match next_event {
+                Some(event) => Some(self.parse_next_event(event)),
+                None => None
+            }
         }
     }
-} // TODO: refactor to avoid all this repetition
+} 
 
 
 /// Main function to convert markdown to html
@@ -80,8 +106,8 @@ pub fn html_from_markdown(md: &str) -> Result<String, SidenoteError> {
     let parser = SidenoteParser::new(Parser::new(md));
 
     let mut html_buf = String::new();
-    for events in parser {
-        html::push_html(&mut html_buf, events?);
+    for event in parser {
+        html::push_html(&mut html_buf, vec![event?].into_iter());
     }
     Ok(html_buf)
 }
@@ -109,24 +135,63 @@ Here is some text with { badly formatted {sidenotes}.
     }
 
     #[test]
-    fn check_multi_line_sidenotes_no_good() {
+    fn check_fail_nested_code_sidenote() {
+
+        let markdown_str = r#"
+hello
+=====
+
+Here is some text with { a sidenote `and code nested`
+    }"#;
+
+        assert!(html_from_markdown(markdown_str).is_err());
+    }
+
+    #[test]
+    fn check_nested_sidenote_code() {
+        let markdown_str = r#"
+hello
+=====
+
+Here is some text with ` code {and curly braces nested`
+"#;
+        assert_eq!(html_from_markdown(markdown_str).expect("Should succeed"),
+            r#"<h1>hello</h1>
+<p>Here is some text with <code>code {and curly braces nested</code></p>
+"#);
+    }
+
+
+    #[test]
+    fn check_multi_line_sidenotes() {
         let markdown_str = r#"
 hello
 =====
 
 Here is some text with { a sidenote
 
-spanning multiple lines, which is no good
+spanning multiple lines, which is also supported
 
-}
+}.
 
 * alpha
 * beta
 
 "#;
 
-        let html_buf = html_from_markdown(markdown_str);
-        assert!(html_buf.is_err());
+        let html_buf = html_from_markdown(markdown_str).expect("Should succeed");
+        assert_eq!(
+            html_buf,
+            r#"<h1>hello</h1>
+<p>Here is some text with <span> a sidenote<br />
+spanning multiple lines, which is also supported<br />
+</span>.</p>
+<ul>
+<li>alpha</li>
+<li>beta</li>
+</ul>
+"#
+        );
     }
 
     #[test]

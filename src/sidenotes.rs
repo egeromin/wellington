@@ -2,130 +2,93 @@ use itertools::Itertools;
 use pulldown_cmark::Event;
 use regex::Regex;
 use std::borrow::Cow;
-use std::vec::IntoIter;
-use std::cmp::{max, min};
-use std::fmt;
 
+use parser::SidenoteParser;
+use sidenote_error::SidenoteError;
 
-/// sidenote errors. The possible errors are:
-/// 
-/// * not matched, e.g. "bla { bla" or "bla } {bla}"
-/// * nested, e.g. "{ bla { }"
-#[derive(Debug)]
-pub enum SidenoteError{
-    NotMatched{
-        context: String
-    },
-    Nested {
-        first: String,
-        second: String
-    }
-}
-
-
-impl fmt::Display for SidenoteError {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match self {
-            SidenoteError::NotMatched{context} => {
-                write!(f, "Error: a sidenote delimiter was not matched: ..{}..", context)
-            },
-            SidenoteError::Nested{first, second} => {
-            write!(f, "Error: encountered a nested sidenote: ..{}.. is enclosed by ..{}..",
-                   first, second)
-            }
-        }
-    }
-}
-
-
-/// check that sidenotes are properly formatted.
-/// There shouldn't be any nested curly braces,
-/// and all braces should match.
-///
-/// # Examples
-///
-/// * this is correct: "this {has sidenotes} {more than once}"
-/// * this is not: "this {has {nested sidenotes} that don't } match}"
-fn check_sidenote_formatting(text: &str) -> Result<(), SidenoteError> {
-    let mut start: Option<usize> = None;
-    for (i, c) in text.chars().enumerate() {
-        match c {
-            '{' => {
-                match start {
-                    Some(j) => {
-                        return Err(SidenoteError::Nested{
-                            first: String::from(&text[max(j-5,0)..min(j+5,text.len())]),
-                            second: String::from(&text[max(i-5,0)..min(i+5,text.len())]),
-                        });
-                    },
-                    None => {
-                        start = Some(i);
-                    }
-                };
-            },
-            '}' => {
-                match start {
-                    None => {
-                        return Err(SidenoteError::NotMatched{
-                            context: String::from(&text[max(i-5,0)..min(i+5,text.len())]),
-                        });
-                    }
-                    _ => {
-                        start = None;
-                    }
-                };
-            },
-            _ => {}
-        };
-    }
-    match start {
-        Some(j) => Err(SidenoteError::NotMatched{
-            context: String::from(&text[max(j-5,0)..min(j+5,text.len())]),
-        }),
-        None => Ok(())
-    }
-}
 
 /// compile sidenotes
 /// if correctly formatted, then replace '{' and '}' with tags
 /// otherwise, return text as is
-pub fn compile_sidenotes(text: Cow<str>) -> Result<IntoIter<Event>, 
-    SidenoteError> {
-    check_sidenote_formatting(&text)?;
+impl<'a> SidenoteParser<'a> { 
 
-    let re = Regex::new(r"[{}]").unwrap();
+    fn parse_first_sidenote<'b>(&'b mut self, text: Cow<'a, str>) -> Event<'a> {
+        let re = Regex::new(r"[{}]").unwrap();
 
-    let text_events = re.split(&text)
-        .map(String::from)
-        .map(Cow::from)
-        .map(Event::Text);
+        match re.find(&text) {
+            Some(m) => {
+                assert_eq!(m.start() + 1, m.end());
+                let first = text[..m.start()].to_string();
+                self.remaining_text = text[m.start()..].to_string();
+                Event::Text(Cow::from(first))
+            },
+            None => {
+                self.remaining_text = "".to_string();
+                Event::Text(Cow::from(text.to_string()))
+                // can I avoid this pointless copy?
+                // how do I tell the compiler that if I return, then
+                // first_match won't be needed anymore?
+            }
+        }
+    }
 
-    // need to collect and into_iter above because `Split` object
-    // doesn't implement Clone
+    fn cycle_remaining_text(&mut self) -> char {
+        let first_char :char;
+        let remaining :String;
+        {
+            let mut remaining_iter = self.remaining_text.chars();
+            first_char = remaining_iter.next()
+                .expect("Remaining text unexpectedly empty!");
+            remaining = remaining_iter.join("");
+        }
+        self.remaining_text = remaining;
+        first_char
+    }
 
-    let start_stop_tags = vec!["<span>", "</span>"];
-    let start_stop_events = start_stop_tags
-        .into_iter()
-        .map(Cow::from)
-        .map(Event::InlineHtml)
-        .cycle();
+    pub fn parse_remaining_text<'b>(&'b mut self) -> Result<Event<'a>, SidenoteError> {
+        // println!("remaining_text: {}", self.remaining_text);
+        let first_char = self.cycle_remaining_text();
+        match first_char {
+            '{' => {
+                if self.in_sidenote_block {
+                    Err(SidenoteError::Nested)
+                } else {
+                    self.in_sidenote_block = true;
+                    Ok(Event::InlineHtml(Cow::from("<span>")))
+                }
+            },
+            '}' => {
+                if self.in_sidenote_block {
+                    self.in_sidenote_block = false;
+                    Ok(Event::InlineHtml(Cow::from("</span>")))
+                } else {
+                    Err(SidenoteError::NotMatched)
+                }
+            },
+            _ => {
+                let mut next_to_parse = first_char.to_string();
+                next_to_parse.push_str(&self.remaining_text);
+                Ok(self.parse_first_sidenote(Cow::from(next_to_parse)))
+            }
+        }
+    }
 
-    let mut all_events = text_events
-        .interleave_shortest(start_stop_events)
-        .collect::<Vec<Event>>();
-
-    all_events.pop(); // remove last item
-    Ok(all_events.into_iter())
-
-    // TODO: is it possible to modify this function and eliminate unnecessary copies?
-    // I don't see how, because the events own the string slices they refer to
-    // Check the mechanics of Cow and smart pointers, because often the data of the 
-    // Cow is borrowed.
+    pub fn parse_text_block<'b>(&'b mut self, text: Cow<'a, str>) -> Event<'a> {
+        if self.in_code_block {
+            Event::Text(text)
+        } else {
+            self.parse_first_sidenote(text)
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use regex::Regex;
+    use std::borrow::Cow;
+    use pulldown_cmark::{Event, Parser};
+    use super::SidenoteParser;
+
 
     #[test]
     fn can_use_regex() {
@@ -133,5 +96,26 @@ mod tests {
         let expected = vec!["a", "separated", "string"];
         let actual: Vec<&str> = re.split("a{separated}string").collect();
         assert_eq!(expected, actual);
+    }
+
+    #[test]
+    fn can_get_first_sidenote() {
+        let text = "here is some text {with sidenotes}"; 
+        let mut parser = SidenoteParser::new(Parser::new(""));
+        assert_eq!(parser.parse_first_sidenote(Cow::from(text)),
+            Event::Text(Cow::from("here is some text ")));
+    }
+
+    #[test]
+    fn can_parse_remaining() {
+        let mut parser = SidenoteParser::new(Parser::new(""));
+        parser.remaining_text = String::from("some remaining { text");
+        let mut event = parser.parse_remaining_text().unwrap();
+        assert_eq!(event, Event::Text(Cow::from("some remaining ")));
+        event = parser.parse_remaining_text().unwrap();
+        assert_eq!(event, Event::InlineHtml(Cow::from("<span>")));
+        event = parser.parse_remaining_text().unwrap();
+        assert_eq!(event, Event::Text(Cow::from(" text")));
+        assert_eq!(parser.remaining_text, "");
     }
 }
