@@ -7,6 +7,9 @@ use parser::SidenoteParser;
 use sidenote_error::SidenoteError;
 
 
+static START_SIDENOTE: &str = r#"<label class="sidenote-number"></label><span class="sidenote">"#;
+
+
 /// compile sidenotes
 /// if correctly formatted, then replace '{' and '}' with tags
 /// otherwise, return text as is
@@ -54,7 +57,7 @@ impl<'a> SidenoteParser<'a> {
                     Err(SidenoteError::Nested)
                 } else {
                     self.in_sidenote_block = true;
-                    Ok(Event::InlineHtml(Cow::from("<span>")))
+                    Ok(Event::InlineHtml(Cow::from(START_SIDENOTE)))
                 }
             },
             '}' => {
@@ -74,6 +77,11 @@ impl<'a> SidenoteParser<'a> {
     }
 
     pub fn parse_text_block<'b>(&'b mut self, text: Cow<'a, str>) -> Event<'a> {
+        if self.in_title {
+            *self.title = Some(text.to_string());
+            self.in_title = false;
+            // capture the first line in the title
+        }
         if self.in_code_block {
             Event::Text(text)
         } else {
@@ -87,7 +95,7 @@ mod tests {
     use regex::Regex;
     use std::borrow::Cow;
     use pulldown_cmark::{Event, Parser};
-    use super::SidenoteParser;
+    use super::{SidenoteParser, START_SIDENOTE};
 
 
     #[test]
@@ -101,19 +109,21 @@ mod tests {
     #[test]
     fn can_get_first_sidenote() {
         let text = "here is some text {with sidenotes}"; 
-        let mut parser = SidenoteParser::new(Parser::new(""));
+        let mut title: Option<String> = None;
+        let mut parser = SidenoteParser::new(Parser::new(""), &mut title);
         assert_eq!(parser.parse_first_sidenote(Cow::from(text)),
             Event::Text(Cow::from("here is some text ")));
     }
 
     #[test]
     fn can_parse_remaining() {
-        let mut parser = SidenoteParser::new(Parser::new(""));
+        let mut title: Option<String> = None;
+        let mut parser = SidenoteParser::new(Parser::new(""), &mut title);
         parser.remaining_text = String::from("some remaining { text");
         let mut event = parser.parse_remaining_text().unwrap();
         assert_eq!(event, Event::Text(Cow::from("some remaining ")));
         event = parser.parse_remaining_text().unwrap();
-        assert_eq!(event, Event::InlineHtml(Cow::from("<span>")));
+        assert_eq!(event, Event::InlineHtml(Cow::from(START_SIDENOTE)));
         event = parser.parse_remaining_text().unwrap();
         assert_eq!(event, Event::Text(Cow::from(" text")));
         assert_eq!(parser.remaining_text, "");

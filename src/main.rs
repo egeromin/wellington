@@ -30,7 +30,7 @@ fn main() {
     let input_filename = matches.opt_str("input").expect("Error with filename");
     let input = fs::read_to_string(input_filename).expect("Error reading input file");
 
-    let output = match html_from_markdown(&input) {
+    let output = match html_from_markdown(&input, true) {
         Ok(ht) => ht,
         Err(err) => {
             println!("{}", err);

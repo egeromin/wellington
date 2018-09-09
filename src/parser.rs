@@ -3,11 +3,18 @@ use std::borrow::Cow;
 
 use sidenote_error::SidenoteError;
 
+
+static FOOTER: &str = r#"
+</section></article></body></html>
+"#;
+
 pub struct SidenoteParser<'a> {
     parser: Parser<'a>,
     pub in_code_block: bool,
     pub in_sidenote_block: bool,
-    pub remaining_text: String 
+    pub remaining_text: String,
+    pub title: &'a mut Option<String>,
+    pub in_title: bool
 }
 
 
@@ -21,12 +28,14 @@ pub struct SidenoteParser<'a> {
 /// code block, so as not to parse for sidenotes in that case
 /// * returns the other events unchanged.
 impl<'a> SidenoteParser<'a> {
-    pub fn new(parser: Parser) -> SidenoteParser {
+    pub fn new(parser: Parser<'a>, title: &'a mut Option<String>) -> SidenoteParser<'a> {
         SidenoteParser{
-            parser, 
+            parser,
+            title,
             in_code_block: false,
             in_sidenote_block: false,
-            remaining_text: String::from("")
+            remaining_text: String::from(""),
+            in_title: false
         }
     }
 
@@ -60,15 +69,23 @@ impl<'a> SidenoteParser<'a> {
         }
     }
 
+    fn start_codeblock() -> Event<'a> {
+        Event::InlineHtml(Cow::from("<pre><code class=\"code\">"))
+    }
+
     fn parse_next_event(&mut self, event: Event<'a>) -> 
         Result<Event<'a>, SidenoteError> {
         match event {
             Event::Text(text) => Ok(self.parse_text_block(text)),
             Event::Start(tag) => match tag {
                 Tag::Code => self.parse_code_tag(true, Event::Start(Tag::Code)),
-                Tag::CodeBlock(lang) => self.parse_code_tag(true, 
-                    Event::Start(Tag::CodeBlock(lang))),
+                Tag::CodeBlock(_lang) => self.parse_code_tag(true, 
+                    SidenoteParser::start_codeblock()),
                 Tag::Paragraph => Ok(self.parse_paragraph_tag(true)),
+                Tag::Header(1) => {
+                    self.in_title = true;
+                    Ok(Event::Start(Tag::Header(1)))
+                },
                 _ => Ok(Event::Start(tag))
             },
             Event::End(tag) => match tag {
@@ -76,6 +93,7 @@ impl<'a> SidenoteParser<'a> {
                 Tag::CodeBlock(lang) => self.parse_code_tag(false, 
                     Event::End(Tag::CodeBlock(lang))),
                 Tag::Paragraph => Ok(self.parse_paragraph_tag(false)),
+                Tag::Header(1) => Ok(Event::InlineHtml(Cow::from("</h1><section>"))),
                 _ => Ok(Event::End(tag))
             },
             _ => Ok(event)
@@ -102,20 +120,43 @@ impl<'a> Iterator for SidenoteParser<'a> {
 
 
 /// Main function to convert markdown to html
-pub fn html_from_markdown(md: &str) -> Result<String, SidenoteError> {
-    let parser = SidenoteParser::new(Parser::new(md));
-
+pub fn html_from_markdown(md: &str, write_header: bool) -> Result<String, SidenoteError> {
+    let mut title: Option<String> = None;
     let mut html_buf = String::new();
-    for event in parser {
-        html::push_html(&mut html_buf, vec![event?].into_iter());
+    {
+        let parser = SidenoteParser::new(Parser::new(md), &mut title);
+        for event in parser {
+            html::push_html(&mut html_buf, vec![event?].into_iter());
+        }
     }
-    Ok(html_buf)
+
+    if write_header {
+        let title_with_default = match title {
+            Some(t) => t,
+            None => "No Title".to_string()
+        };
+        let header = format!(r#"
+<html>
+<head>
+<link rel="stylesheet" href="tufte.css" />
+<title>{}</title>
+</head>
+<body>
+<article>
+"#, title_with_default);
+
+        // let header = format!(HEADER, title);
+        Ok(format!("{}{}{}", header, html_buf, FOOTER))
+    } else {
+        Ok(html_buf)
+    }
 }
 
 
 #[cfg(test)]
 mod tests {
-    use super::html_from_markdown;
+    use pulldown_cmark::Parser;
+    use super::{html_from_markdown, SidenoteParser};
 
     #[test]
     fn check_catch_sidenote_errors() {
@@ -130,7 +171,7 @@ Here is some text with { badly formatted {sidenotes}.
 
 "#;
 
-        let html_buf = html_from_markdown(markdown_str);
+        let html_buf = html_from_markdown(markdown_str, false);
         assert!(html_buf.is_err());
     }
 
@@ -144,7 +185,7 @@ hello
 Here is some text with { a sidenote `and code nested`
     }"#;
 
-        assert!(html_from_markdown(markdown_str).is_err());
+        assert!(html_from_markdown(markdown_str, false).is_err());
     }
 
     #[test]
@@ -155,8 +196,8 @@ hello
 
 Here is some text with ` code {and curly braces nested`
 "#;
-        assert_eq!(html_from_markdown(markdown_str).expect("Should succeed"),
-            r#"<h1>hello</h1>
+        assert_eq!(html_from_markdown(markdown_str, false).expect("Should succeed"),
+            r#"<h1>hello</h1><section>
 <p>Here is some text with <code>code {and curly braces nested</code></p>
 "#);
     }
@@ -179,11 +220,11 @@ spanning multiple lines, which is also supported
 
 "#;
 
-        let html_buf = html_from_markdown(markdown_str).expect("Should succeed");
+        let html_buf = html_from_markdown(markdown_str, false).expect("Should succeed");
         assert_eq!(
             html_buf,
-            r#"<h1>hello</h1>
-<p>Here is some text with <span> a sidenote<br />
+            r#"<h1>hello</h1><section>
+<p>Here is some text with <label class="sidenote-number"></label><span class="sidenote"> a sidenote<br />
 spanning multiple lines, which is also supported<br />
 </span>.</p>
 <ul>
@@ -214,18 +255,18 @@ code_with{
 ```
 
 "#;
-        let html_buf = html_from_markdown(markdown_str).expect("Shouldn't fail!");
+        let html_buf = html_from_markdown(markdown_str, false).expect("Shouldn't fail!");
 
         assert_eq!(
             html_buf,
-            r#"<h1>hello</h1>
-<p>Here is some text with <span>sidenotes</span>.</p>
+            r#"<h1>hello</h1><section>
+<p>Here is some text with <label class="sidenote-number"></label><span class="sidenote">sidenotes</span>.</p>
 <ul>
 <li>alpha</li>
 <li>beta</li>
 </ul>
 <p>And also some <code>inline_code</code> as well as</p>
-<pre><code>code_with{
+<pre><code class="code">code_with{
     curly_braces();
 }
 </code></pre>
@@ -233,4 +274,19 @@ code_with{
         );
     }
 
+    #[test]
+    fn can_get_title() {
+        let md = r#"
+hello
+=====
+
+Here is some text with {sidenotes}.
+"#;
+        let mut title: Option<String> = None;
+        {
+            let parser = SidenoteParser::new(Parser::new(md), &mut title);
+            for _ in parser {}
+        }
+        assert_eq!(title.expect("Should work!"), "hello")
+    }
 }
