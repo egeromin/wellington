@@ -14,7 +14,9 @@ pub struct SidenoteParser<'a> {
     pub in_sidenote_block: bool,
     pub remaining_text: String,
     pub title: &'a mut Option<String>,
-    pub in_title: bool
+    pub in_title: bool,
+    pub in_image: bool,
+    pub remaining_events: Vec<Event<'a>>
 }
 
 
@@ -35,7 +37,9 @@ impl<'a> SidenoteParser<'a> {
             in_code_block: false,
             in_sidenote_block: false,
             remaining_text: String::from(""),
-            in_title: false
+            in_title: false,
+            in_image: false,
+            remaining_events: vec![]
         }
     }
 
@@ -53,7 +57,7 @@ impl<'a> SidenoteParser<'a> {
         Event<'a> {
         if self.in_sidenote_block {
             if start {
-                Event::InlineHtml(Cow::from("<br />\n"))
+                Event::InlineHtml(Cow::from("<br /><br />\n"))
             } else { // create empty event
                 Event::Text(Cow::from(""))
                 // TODO: would be cleaner to instead skip this and go straight
@@ -86,6 +90,10 @@ impl<'a> SidenoteParser<'a> {
                     self.in_title = true;
                     Ok(Event::Start(Tag::Header(1)))
                 },
+                Tag::Image(url, title) => {
+                    self.in_image = true;
+                    Ok(Event::Start(Tag::Image(url, title)))
+                },
                 _ => Ok(Event::Start(tag))
             },
             Event::End(tag) => match tag {
@@ -94,6 +102,10 @@ impl<'a> SidenoteParser<'a> {
                     Event::End(Tag::CodeBlock(lang))),
                 Tag::Paragraph => Ok(self.parse_paragraph_tag(false)),
                 Tag::Header(1) => Ok(Event::InlineHtml(Cow::from("</h1><section>"))),
+                Tag::Image(url, title) => {
+                    self.in_image = false;
+                    Ok(Event::End(Tag::Image(url, title)))
+                },
                 _ => Ok(Event::End(tag))
             },
             _ => Ok(event)
@@ -106,13 +118,18 @@ impl<'a> Iterator for SidenoteParser<'a> {
     type Item = Result<Event<'a>, SidenoteError>;
 
     fn next(&mut self) -> Option<Result<Event<'a>, SidenoteError>> {
-        if self.remaining_text.len() > 0 {
-            Some(self.parse_remaining_text())
-        } else {
-            let next_event = self.parser.next();
-            match next_event {
-                Some(event) => Some(self.parse_next_event(event)),
-                None => None
+        match self.remaining_events.pop() {
+            Some(e) => Some(Ok(e)),
+            None => {
+                if self.remaining_text.len() > 0 {
+                    Some(self.parse_remaining_text())
+                } else {
+                    let next_event = self.parser.next();
+                    match next_event {
+                        Some(event) => Some(self.parse_next_event(event)),
+                        None => None
+                    }
+                }
             }
         }
     }
@@ -224,8 +241,8 @@ spanning multiple lines, which is also supported
         assert_eq!(
             html_buf,
             r#"<h1>hello</h1><section>
-<p>Here is some text with <label class="sidenote-number"></label><span class="sidenote"> a sidenote<br />
-spanning multiple lines, which is also supported<br />
+<p>Here is some text with <label class="sidenote-number"></label><span class="sidenote"> a sidenote<br /><br />
+spanning multiple lines, which is also supported<br /><br />
 </span>.</p>
 <ul>
 <li>alpha</li>
@@ -288,5 +305,18 @@ Here is some text with {sidenotes}.
             for _ in parser {}
         }
         assert_eq!(title.expect("Should work!"), "hello")
+    }
+
+    #[test]
+    fn can_parse_image() {
+        let md = r#"
+hello
+=====
+
+![image](https://image)
+"#;
+        assert_eq!(html_from_markdown(md, false).expect("should work!"), r#"<h1>hello</h1><section>
+<p><img src="https://image" alt="" /><br /><span class="image-caption">image</span></p>
+"#);
     }
 }

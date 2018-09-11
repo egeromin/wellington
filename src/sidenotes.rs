@@ -82,7 +82,14 @@ impl<'a> SidenoteParser<'a> {
             self.in_title = false;
             // capture the first line in the title
         }
-        if self.in_code_block {
+        if self.in_image {
+            self.remaining_events = vec![
+                Event::InlineHtml(Cow::from("</span>")),
+                Event::Text(text)
+            ];
+            Event::InlineHtml(Cow::from("<br /><span class=\"image-caption\">"))
+        }
+        else if self.in_code_block {
             Event::Text(text)
         } else {
             self.parse_first_sidenote(text)
