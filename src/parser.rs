@@ -136,8 +136,14 @@ impl<'a> Iterator for SidenoteParser<'a> {
 } 
 
 
+pub struct ParsedMarkdown {
+    pub html: String,
+    pub title: Option<String>
+}
+
+
 /// Main function to convert markdown to html
-pub fn html_from_markdown(md: &str, write_header: bool) -> Result<String, SidenoteError> {
+pub fn html_from_markdown(md: &str, write_header: bool) -> Result<ParsedMarkdown, SidenoteError> {
     let mut title: Option<String> = None;
     let mut html_buf = String::new();
     {
@@ -147,9 +153,17 @@ pub fn html_from_markdown(md: &str, write_header: bool) -> Result<String, Sideno
         }
     }
 
+    let title = match title {
+        Some(t) => match t.len() {
+            0 => None,  // don't allow empty titles
+            _ => Some(t)
+        },
+        None => None
+    };
+
     if write_header {
-        let title_with_default = match title {
-            Some(t) => t,
+        let title_with_default = match &title {
+            Some(t) => t.clone(),
             None => "No Title".to_string()
         };
         let header = format!(r#"
@@ -163,10 +177,10 @@ pub fn html_from_markdown(md: &str, write_header: bool) -> Result<String, Sideno
 "#, title_with_default);
 
         // let header = format!(HEADER, title);
-        Ok(format!("{}{}{}", header, html_buf, FOOTER))
-    } else {
-        Ok(html_buf)
+        html_buf = format!("{}{}{}", header, html_buf, FOOTER);
     }
+    Ok(ParsedMarkdown{html: html_buf, title})
+
 }
 
 
@@ -213,7 +227,7 @@ hello
 
 Here is some text with ` code {and curly braces nested`
 "#;
-        assert_eq!(html_from_markdown(markdown_str, false).expect("Should succeed"),
+        assert_eq!(html_from_markdown(markdown_str, false).expect("Should succeed").html,
             r#"<h1>hello</h1><section>
 <p>Here is some text with <code>code {and curly braces nested</code></p>
 "#);
@@ -239,7 +253,7 @@ spanning multiple lines, which is also supported
 
         let html_buf = html_from_markdown(markdown_str, false).expect("Should succeed");
         assert_eq!(
-            html_buf,
+            html_buf.html,
             r#"<h1>hello</h1><section>
 <p>Here is some text with <label class="sidenote-number"></label><span class="sidenote"> a sidenote<br /><br />
 spanning multiple lines, which is also supported<br /><br />
@@ -275,7 +289,7 @@ code_with{
         let html_buf = html_from_markdown(markdown_str, false).expect("Shouldn't fail!");
 
         assert_eq!(
-            html_buf,
+            html_buf.html,
             r#"<h1>hello</h1><section>
 <p>Here is some text with <label class="sidenote-number"></label><span class="sidenote">sidenotes</span>.</p>
 <ul>
@@ -315,7 +329,7 @@ hello
 
 ![image](https://image)
 "#;
-        assert_eq!(html_from_markdown(md, false).expect("should work!"), r#"<h1>hello</h1><section>
+        assert_eq!(html_from_markdown(md, false).expect("should work!").html, r#"<h1>hello</h1><section>
 <p><img src="https://image" alt="" /><br /><span class="image-caption">image</span></p>
 "#);
     }

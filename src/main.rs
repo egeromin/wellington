@@ -3,8 +3,9 @@ extern crate wellington;
 
 use std::env;
 use std::fs;
+use std::path::PathBuf;
 
-use wellington::html_from_markdown;
+use wellington::{html_from_markdown, Blog};
 
 
 fn usage(program: &str) -> String {
@@ -26,7 +27,19 @@ fn convert(input_filename: &str, output_filename: &str) {
             std::process::exit(1);
         }
     };
-    fs::write(output_filename, output).expect("Error writing result");
+    fs::write(output_filename, output.html).expect("Error writing result");
+}
+
+
+fn sync(blog_path: &str) {
+    let mut blog = Blog::new(PathBuf::from(blog_path));
+    match blog.sync() {
+        Ok(i) => println!("Updated {} posts", i),
+        Err(err) => {
+            println!("Couldn't sync: {}", err);
+            std::process::exit(1);
+        }
+    }
 }
 
 
@@ -46,6 +59,11 @@ fn main() {
         } 
         convert(&args[2], &args[3]);
     } else if command == "sync" {
+        if args.len() < 3 {
+            eprintln!("Please give me 1 argument: the path to the blog");
+            std::process::exit(1);
+        } 
+        sync(&args[2]);
     } else {
         eprintln!("I don't recognise this command :(");
     }
