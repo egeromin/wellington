@@ -3,8 +3,11 @@ use std::fs;
 use std::path::PathBuf;
 use std::time::SystemTime;
 use csv::{WriterBuilder, ReaderBuilder};
+use handlebars::Handlebars;
 
 use parser::html_from_markdown;
+
+const TOC_TEMPLATE: &[u8]  = include_bytes!("../templates/toc.html");
 
 
 #[derive(Debug, PartialEq, Clone, Deserialize, Serialize)]
@@ -77,6 +80,7 @@ impl IndexedBlogPost {
 }
 
 
+#[derive(Serialize)]
 pub struct Blog {
     index: Vec<IndexedBlogPost>,
     path: PathBuf
@@ -90,7 +94,8 @@ pub enum BlogError {
     ConvertError(String),
     WriteError(String),
     ReadIndexError(String),
-    WriteIndexError(String)
+    WriteIndexError(String),
+    WriteTocError(String)
 }
 
 impl fmt::Display for BlogError {
@@ -103,6 +108,7 @@ impl fmt::Display for BlogError {
             BlogError::WriteIndexError(err) => write!(f, "Encountered an error while writing the index: {}", err),
             BlogError::ConvertError(err) => write!(f, "Encountered an error while converting: {}", err),
             BlogError::ReadIndexError(err) => write!(f, "Encountered an error while reading the index: {}", err),
+            BlogError::WriteTocError(err) => write!(f, "Couldn't write table of contents {}", err),
         }
     }
 }
@@ -114,6 +120,11 @@ impl Blog {
 
     fn get_index_path(&self) -> PathBuf {
         let mut index_path = self.path.clone(); index_path.push(".index.csv");
+        index_path
+    }
+
+    fn get_toc_path(&self) -> PathBuf {
+        let mut index_path = self.path.clone(); index_path.push("index.html");
         index_path
     }
 
@@ -142,7 +153,10 @@ impl Blog {
     pub fn sync(&mut self) -> Result<usize, BlogError> {
         self.load()?;
         let num_updated = self.update(false)?;
-        self.persist()?;
+        if num_updated > 0 {
+            self.write_toc()?;
+            self.persist()?;
+        }  // else, no update necessary
         Ok(num_updated)
     }
 
@@ -157,16 +171,34 @@ impl Blog {
             }
         };
         for post in self.index.iter() {
-            writer.serialize(post).expect("Can't serialize");
-            // match writer.serialize(post) {
-            //     Ok(_) => (),
-            //     _ => {
-            //         return Err(BlogError::WriteIndexError(format!(
-            //             "Couldn't serialize {:?}", post)));
-            //     }
-            // };
+            match writer.serialize(post) {
+                Ok(_) => (),
+                _ => {
+                    return Err(BlogError::WriteIndexError(format!(
+                        "Couldn't serialize {:?}", post)));
+                }
+            };
         }
         Ok(())
+    }
+
+    // Write table of contents HTML
+    fn render_index(&self, template: &str) -> Result<String, BlogError> {
+        let handlebars = Handlebars::new();
+        match handlebars.render_template(template, &self) {
+            Ok(s) => Ok(s),
+            Err(e) => Err(BlogError::WriteTocError(
+                format!("Couldn't render template: {:?}", e)))
+        }
+    }
+
+    fn write_toc(&self) -> Result<(), BlogError> {
+        let template = String::from_utf8_lossy(TOC_TEMPLATE);
+        match fs::write(self.get_toc_path(), self.render_index(&template)?) {
+            Ok(_) => Ok(()),
+            Err(e) => Err(BlogError::WriteTocError(format!(
+                "Couldn't write to file: {:?}", e)))
+        }
     }
 
     fn list_entries(path: &PathBuf, only_dir: bool) -> Result<Vec<BlogPost>, BlogError> {
@@ -408,5 +440,25 @@ mod tests {
         blog2.load().expect("can't load");
         cleanup(&blog_path);
         assert_eq!(blog.index, blog2.index);
+    }
+
+    #[test]
+    fn render_index() {
+        let blog_path = create_fake_dirs("blog");
+        let mut blog = Blog::new(blog_path.clone());
+        let posts = blog.list_posts().expect("can't list posts");
+        blog.index = vec![
+            IndexedBlogPost::from(BlogPost{
+                path: posts[0].path.clone(),
+                last_updated: SystemTime::UNIX_EPOCH
+            })
+        ];
+        let title = "A title";
+        blog.index[0].title = Some(title.to_string());
+        // let template = "{{title}}";
+        let template = "{{#each index}}{{title}}{{/each}}";
+        let rendered = blog.render_index(template).expect("Couldn't render");
+        assert_eq!(rendered, format!("{}", title));
+        cleanup(&blog_path);
     }
 }

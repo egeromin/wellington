@@ -4,6 +4,7 @@ extern crate regex;
 #[macro_use]
 extern crate serde_derive;
 extern crate csv;
+extern crate handlebars;
 
 mod sidenote_error;
 mod parser;
