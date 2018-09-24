@@ -1,12 +1,12 @@
 use pulldown_cmark::{Event, Tag, html, Parser};
 use std::borrow::Cow;
+use handlebars::{Handlebars, no_escape, html_escape};
 
 use sidenote_error::SidenoteError;
 
 
-static FOOTER: &str = r#"
-</section></article></body></html>
-"#;
+const POST_TEMPLATE: &[u8]  = include_bytes!("../templates/post.html");
+
 
 pub struct SidenoteParser<'a> {
     parser: Parser<'a>,
@@ -101,7 +101,10 @@ impl<'a> SidenoteParser<'a> {
                 Tag::CodeBlock(lang) => self.parse_code_tag(false, 
                     Event::End(Tag::CodeBlock(lang))),
                 Tag::Paragraph => Ok(self.parse_paragraph_tag(false)),
-                Tag::Header(1) => Ok(Event::InlineHtml(Cow::from("</h1><section>"))),
+                Tag::Header(1) => {
+                    self.in_title = false;
+                    Ok(Event::InlineHtml(Cow::from("</h1><section>")))
+                },
                 Tag::Image(url, title) => {
                     self.in_image = false;
                     Ok(Event::End(Tag::Image(url, title)))
@@ -136,6 +139,26 @@ impl<'a> Iterator for SidenoteParser<'a> {
 } 
 
 
+#[derive(Serialize)]
+struct PostData<'a> {
+    article: &'a str,
+    title: Option<String>
+}
+
+
+impl<'a> PostData<'a> {
+    fn render(&self, template: &str) -> Result<String, SidenoteError> {
+        let mut handlebars = Handlebars::new();
+        handlebars.register_escape_fn(no_escape);
+        match handlebars.render_template(template, &self) {
+            Ok(s) => Ok(s),
+            Err(e) => Err(SidenoteError::Template(
+                format!("{:?}", e)))
+        }
+    }
+}
+
+
 pub struct ParsedMarkdown {
     pub html: String,
     pub title: Option<String>
@@ -145,13 +168,15 @@ pub struct ParsedMarkdown {
 /// Main function to convert markdown to html
 pub fn html_from_markdown(md: &str, write_header: bool) -> Result<ParsedMarkdown, SidenoteError> {
     let mut title: Option<String> = None;
-    let mut html_buf = String::new();
+    let mut html_buf = "<article>".to_string();
     {
         let parser = SidenoteParser::new(Parser::new(md), &mut title);
         for event in parser {
             html::push_html(&mut html_buf, vec![event?].into_iter());
         }
     }
+
+    html_buf.push_str("</section></article>");
 
     let title = match title {
         Some(t) => match t.len() {
@@ -162,26 +187,17 @@ pub fn html_from_markdown(md: &str, write_header: bool) -> Result<ParsedMarkdown
     };
 
     if write_header {
-        let title_with_default = match &title {
-            Some(t) => t.clone(),
-            None => "No Title".to_string()
-        };
-        let header = format!(r#"
-<html>
-<head>
-<link rel="stylesheet" href="tufte.css" />
-<title>{}</title>
-</head>
-<body>
-<article>
-"#, title_with_default);
-
-        // let header = format!(HEADER, title);
-        html_buf = format!("{}{}{}", header, html_buf, FOOTER);
+        let post_template = String::from_utf8_lossy(POST_TEMPLATE);
+        let title_escaped = match &title {
+            Some(t) => Some(html_escape(t)),
+            None => None
+        }; // escape only title
+        html_buf = PostData{article: &html_buf, title: title_escaped}.render(&post_template)?;
     }
+
     Ok(ParsedMarkdown{html: html_buf, title})
 
-}
+}  // TODO: clean up this function!
 
 
 #[cfg(test)]
@@ -228,9 +244,10 @@ hello
 Here is some text with ` code {and curly braces nested`
 "#;
         assert_eq!(html_from_markdown(markdown_str, false).expect("Should succeed").html,
-            r#"<h1>hello</h1><section>
+            r#"<article>
+<h1>hello</h1><section>
 <p>Here is some text with <code>code {and curly braces nested</code></p>
-"#);
+</section></article>"#);
     }
 
 
@@ -254,7 +271,8 @@ spanning multiple lines, which is also supported
         let html_buf = html_from_markdown(markdown_str, false).expect("Should succeed");
         assert_eq!(
             html_buf.html,
-            r#"<h1>hello</h1><section>
+            r#"<article>
+<h1>hello</h1><section>
 <p>Here is some text with <label class="sidenote-number"></label><span class="sidenote"> a sidenote<br /><br />
 spanning multiple lines, which is also supported<br /><br />
 </span>.</p>
@@ -262,7 +280,7 @@ spanning multiple lines, which is also supported<br /><br />
 <li>alpha</li>
 <li>beta</li>
 </ul>
-"#
+</section></article>"#
         );
     }
 
@@ -290,7 +308,8 @@ code_with{
 
         assert_eq!(
             html_buf.html,
-            r#"<h1>hello</h1><section>
+            r#"<article>
+<h1>hello</h1><section>
 <p>Here is some text with <label class="sidenote-number"></label><span class="sidenote">sidenotes</span>.</p>
 <ul>
 <li>alpha</li>
@@ -301,14 +320,14 @@ code_with{
     curly_braces();
 }
 </code></pre>
-"#
+</section></article>"#
         );
     }
 
     #[test]
     fn can_get_title() {
         let md = r#"
-hello
+hello & hello
 =====
 
 Here is some text with {sidenotes}.
@@ -318,7 +337,7 @@ Here is some text with {sidenotes}.
             let parser = SidenoteParser::new(Parser::new(md), &mut title);
             for _ in parser {}
         }
-        assert_eq!(title.expect("Should work!"), "hello")
+        assert_eq!(title.expect("Should work, even with ampersands!"), "hello & hello")
     }
 
     #[test]
@@ -329,8 +348,9 @@ hello
 
 ![image](https://image)
 "#;
-        assert_eq!(html_from_markdown(md, false).expect("should work!").html, r#"<h1>hello</h1><section>
+        assert_eq!(html_from_markdown(md, false).expect("should work!").html, r#"<article>
+<h1>hello</h1><section>
 <p><img src="https://image" alt="" /><br /><span class="image-caption">image</span></p>
-"#);
+</section></article>"#);
     }
 }

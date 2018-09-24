@@ -11,9 +11,10 @@ const TOC_TEMPLATE: &[u8]  = include_bytes!("../templates/toc.html");
 
 
 #[derive(Debug, PartialEq, Clone, Deserialize, Serialize)]
-struct IndexedBlogPost {
+pub struct IndexedBlogPost {
+    #[serde(skip)]
     path: PathBuf,
-    rel_url: String, // TODO: use serde trickery to skip serializing this?
+    post_url: String, 
     last_updated: SystemTime,
     first_published: SystemTime,
     #[serde(skip)]
@@ -31,7 +32,7 @@ struct BlogPost {
 
 // given the absolute path of a blogpost, get its 
 // relative url as required by the website
-fn rel_url_from_path(path: &PathBuf) -> String {
+fn post_url_from_path(path: &PathBuf) -> String {
     let post_name = match path.file_name() {
         Some(s) => match s.to_str() {
             Some(t) => t,
@@ -56,10 +57,10 @@ fn rel_url_from_path(path: &PathBuf) -> String {
 impl From<BlogPost> for IndexedBlogPost {
 
     fn from(post: BlogPost) -> Self {
-        let rel_url = rel_url_from_path(&post.path);
+        let post_url = post_url_from_path(&post.path);
         IndexedBlogPost {
             path: post.path,
-            rel_url,
+            post_url,
             last_updated: post.last_updated,
             first_published: post.last_updated,
             checked: false,
@@ -70,6 +71,13 @@ impl From<BlogPost> for IndexedBlogPost {
 
 
 impl IndexedBlogPost {
+
+    pub fn example() -> Self {
+        IndexedBlogPost::from(BlogPost{
+            path: PathBuf::from("/example"),
+            last_updated: SystemTime::UNIX_EPOCH
+        })
+    } // example, for testing
 
     fn get_filename_path(&self, file: &str) -> Result<String, BlogError> {
         let mut input_path = self.path.clone();
@@ -111,7 +119,8 @@ impl IndexedBlogPost {
 #[derive(Serialize)]
 pub struct Blog {
     index: Vec<IndexedBlogPost>,
-    path: PathBuf
+    path: PathBuf,
+    index_url: String
 }
 
 
@@ -149,7 +158,19 @@ impl fmt::Display for BlogError {
 
 impl Blog {
 
-    pub fn new(path: PathBuf) -> Blog { Blog{path, index: vec![]} }
+    pub fn new(path: PathBuf) -> Blog { 
+        let index_url;
+        {
+            index_url = format!("/{}/", match &path.file_name() {
+                Some(s) => match s.to_str() {
+                    Some(t) => t,
+                    None => ""
+                },
+                None => ""
+            });
+        }
+        Blog{path, index: vec![], index_url}
+    }
 
     fn get_index_path(&self) -> PathBuf {
         let mut index_path = self.path.clone(); index_path.push(".index.csv");
@@ -301,10 +322,11 @@ impl Blog {
     }
 
     // perform a linear search in index
+    // compare by relative path, in case the whole website moved location locally
     // TODO: replace with a more efficient method, when there are many posts
     fn find_in_index(&self, post: &BlogPost) -> Option<usize> {
         for (i, b) in self.index.iter().enumerate() {
-            if b.path == post.path {
+            if b.post_url == post_url_from_path(&post.path) {
                 return Some(i);
             }
         }
@@ -317,6 +339,7 @@ impl Blog {
         for post in all_posts {
             if let Some(i) = self.find_in_index(&post) {
                 self.index[i].checked = true;
+                self.index[i].path = post.path;  // populate path
                 if self.index[i].last_updated < post.last_updated {
                     self.index[i].last_updated = post.last_updated;
                     if ! dry_run {
@@ -326,11 +349,11 @@ impl Blog {
                 }
             } else {
                 let now = SystemTime::now();
-                let rel_url = rel_url_from_path(&post.path);
+                let post_url = post_url_from_path(&post.path);
                 let mut new_post = IndexedBlogPost{
                     path: post.path, last_updated: now,
                     first_published: now, checked: true,
-                    title: None, rel_url
+                    title: None, post_url
                 };
                 if ! dry_run {
                     new_post.convert()?;
@@ -476,6 +499,9 @@ mod tests {
             })
         ];
         blog.index[1].title = Some("Some title with \"quotes".to_string());
+        blog.index[0].path = PathBuf::new();
+        blog.index[1].path = PathBuf::new();
+        // reset, since absolute paths are not persisted
 
         blog.persist().expect("can't persist");
         let mut blog2 = Blog::new(blog_path.clone());

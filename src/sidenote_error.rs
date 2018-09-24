@@ -8,7 +8,8 @@ use std::fmt;
 #[derive(Debug)]
 pub enum SidenoteError{
     NotMatched,
-    Nested
+    Nested,
+    Template(String)
 }
 
 
@@ -20,6 +21,9 @@ impl fmt::Display for SidenoteError {
             },
             SidenoteError::Nested => {
                 write!(f, "Error: encountered a nested sidenote")
+            },
+            SidenoteError::Template(s) => {
+                write!(f, "Couldn't render template: {}", s)
             }
         }
     }

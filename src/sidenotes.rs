@@ -78,9 +78,14 @@ impl<'a> SidenoteParser<'a> {
 
     pub fn parse_text_block<'b>(&'b mut self, text: Cow<'a, str>) -> Event<'a> {
         if self.in_title {
-            *self.title = Some(text.to_string());
-            self.in_title = false;
-            // capture the first line in the title
+            match self.title {
+                Some(s) => {
+                    s.push_str(&text);
+                },
+                None => {
+                    *self.title = Some(text.to_string());
+                }
+            }
         }
         if self.in_image {
             self.remaining_events = vec![
