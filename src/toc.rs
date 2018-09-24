@@ -13,6 +13,7 @@ const TOC_TEMPLATE: &[u8]  = include_bytes!("../templates/toc.html");
 #[derive(Debug, PartialEq, Clone, Deserialize, Serialize)]
 struct IndexedBlogPost {
     path: PathBuf,
+    rel_url: String, // TODO: use serde trickery to skip serializing this?
     last_updated: SystemTime,
     first_published: SystemTime,
     #[serde(skip)]
@@ -28,10 +29,37 @@ struct BlogPost {
 }
 
 
+// given the absolute path of a blogpost, get its 
+// relative url as required by the website
+fn rel_url_from_path(path: &PathBuf) -> String {
+    let post_name = match path.file_name() {
+        Some(s) => match s.to_str() {
+            Some(t) => t,
+            None => ""
+        },
+        None => ""
+    };
+    let blog_name = match path.parent() {
+        Some(p) => match p.file_name() {
+            Some(s) => match s.to_str() {
+                Some(t) => t,
+                None => ""
+            },
+            None => ""
+        },
+        None => ""
+    };
+    format!("/{}/{}/", blog_name, post_name)
+}
+
+
 impl From<BlogPost> for IndexedBlogPost {
+
     fn from(post: BlogPost) -> Self {
+        let rel_url = rel_url_from_path(&post.path);
         IndexedBlogPost {
             path: post.path,
+            rel_url,
             last_updated: post.last_updated,
             first_published: post.last_updated,
             checked: false,
@@ -95,8 +123,11 @@ pub enum BlogError {
     WriteError(String),
     ReadIndexError(String),
     WriteIndexError(String),
-    WriteTocError(String)
-}
+    WriteTocError(String),
+    NoInit,
+    CantInit
+} // TODO: refactor using a single error type and an errorKind
+
 
 impl fmt::Display for BlogError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
@@ -109,6 +140,8 @@ impl fmt::Display for BlogError {
             BlogError::ConvertError(err) => write!(f, "Encountered an error while converting: {}", err),
             BlogError::ReadIndexError(err) => write!(f, "Encountered an error while reading the index: {}", err),
             BlogError::WriteTocError(err) => write!(f, "Couldn't write table of contents {}", err),
+            BlogError::NoInit => write!(f, "Attempting to sync an uninitialised blog. Please call `init` first"),
+            BlogError::CantInit => write!(f, "Couldn't initialise blog. Do you write permission?")
         }
     }
 }
@@ -133,9 +166,10 @@ impl Blog {
             .has_headers(false)
             .from_path(self.get_index_path()) {
             Ok(w) => w,
-            _ => {return Ok(());} 
-            // if opening the file causes error, assume it's because the file
-            // doesn't exist, and ignore
+            _ => {
+                return Err(BlogError::NoInit);
+                // assume that if I can't read, it's because the file doesn't exist.
+            } 
         };
 
         for post in reader.into_deserialize() {
@@ -148,6 +182,13 @@ impl Blog {
             });
         }
         Ok(())      
+    }
+
+    pub fn init(&self) -> Result<(), BlogError> {
+        match fs::File::create(self.get_index_path()) {
+            Ok(_) => Ok(()),
+            _ => Err(BlogError::CantInit)
+        }
     }
 
     pub fn sync(&mut self) -> Result<usize, BlogError> {
@@ -285,10 +326,11 @@ impl Blog {
                 }
             } else {
                 let now = SystemTime::now();
+                let rel_url = rel_url_from_path(&post.path);
                 let mut new_post = IndexedBlogPost{
                     path: post.path, last_updated: now,
                     first_published: now, checked: true,
-                    title: None
+                    title: None, rel_url
                 };
                 if ! dry_run {
                     new_post.convert()?;

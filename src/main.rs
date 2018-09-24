@@ -12,9 +12,10 @@ fn usage(program: &str) -> String {
     format!(r#"Usage: {} [command]"
 
 Where command is one of:
-    convert <input> <output>    Convert input markdown to output html
-    sync <blogdir>              Sync all blog posts in blogdir, refreshing the 
-                                table of contents
+    convert <input> <output>    Convert input markdown file to output html file
+    init                        Initialise the current directory as a blog
+    sync                        Sync all blog posts in the current blog directory, 
+                                refreshing the table of contents
 "#, program)
 }
 
@@ -31,8 +32,28 @@ fn convert(input_filename: &str, output_filename: &str) {
 }
 
 
-fn sync(blog_path: &str) {
-    let mut blog = Blog::new(PathBuf::from(blog_path));
+fn current_dir() -> PathBuf {
+    match env::current_dir() {
+        Ok(p) => p,
+        _ => {
+            println!("Couldn't access the current directory. Do you have sufficient permissions?");
+            std::process::exit(1);
+        }
+    }
+}
+
+
+fn init() {
+    let blog = Blog::new(current_dir());
+    match blog.init() {
+        Ok(_) => println!("Initialised new empty blog"),
+        _ => println!("Couldn't initialise blog. Do you write permission?")
+    }
+}
+
+
+fn sync() {
+    let mut blog = Blog::new(current_dir());
     match blog.sync() {
         Ok(i) => println!("Updated {} posts", i),
         Err(err) => {
@@ -59,11 +80,9 @@ fn main() {
         } 
         convert(&args[2], &args[3]);
     } else if command == "sync" {
-        if args.len() < 3 {
-            eprintln!("Please give me 1 argument: the path to the blog");
-            std::process::exit(1);
-        } 
-        sync(&args[2]);
+        sync();
+    } else if command == "init" {
+        init();
     } else {
         eprintln!("I don't recognise this command :(");
     }
