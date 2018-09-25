@@ -16,8 +16,12 @@ fn usage(program: &str, init_opts: &str) -> String {
 Where command is one of:
     convert <input> <output>    Convert input markdown file to output html file
 
-    sync                        Sync all blog posts in the current blog directory, 
-                                refreshing the table of contents
+    sync [-f]                   Sync all blog posts in the current blog directory, 
+                                refreshing the table of contents. 
+                                
+                                If no posts were updated, the index and posts 
+                                won't be re-rendered, unless you use the -f flag. 
+                                Use this flag when changing templates, for example.
 
     init <options>              Initialise the current directory as a blog. There
                                 are the following options:{}
@@ -82,7 +86,7 @@ fn init(post: Option<String>, index: Option<String>) {
 }
 
 
-fn sync() {
+fn sync(force: bool) {
     let mut blog = match Blog::new(current_dir()) {
         Ok(b) => b,
         Err(e) => {
@@ -90,7 +94,7 @@ fn sync() {
             std::process::exit(1);
         }
     };
-    match blog.sync() {
+    match blog.sync(force) {
         Ok(i) => println!("Updated {} posts", i),
         Err(err) => {
             println!("Couldn't sync: {}", err);
@@ -121,7 +125,11 @@ fn main() {
         } 
         convert(&args[2], &args[3]);
     } else if command == "sync" {
-        sync();
+        if args.len() == 3 && args[2] == "-f" {
+            sync(true);
+        } else {
+            sync(false);
+        }
     } else if command == "init" {
         let matches = match init_opts.parse(&args[1..]) {
             Ok(m) => m,

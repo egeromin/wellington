@@ -255,11 +255,11 @@ impl Blog {
         Ok(())
     }
 
-    pub fn sync(&mut self) -> Result<usize, BlogError> {
+    pub fn sync(&mut self, force: bool) -> Result<usize, BlogError> {
         self.load()?;
-        let num_updated = self.update(false)?;
+        let num_updated = self.update(false, force)?;
 
-        if num_updated > 0 {
+        if num_updated > 0 || force {
             self.write_toc()?;
             self.persist()?;
         }  // else, no update necessary
@@ -375,19 +375,20 @@ impl Blog {
         None
     }
 
-    fn update(&mut self, dry_run: bool) -> Result<usize, BlogError> {
+    fn update(&mut self, dry_run: bool, force: bool) -> Result<usize, BlogError> {
         let all_posts = self.list_posts()?;
         let mut num_updated: usize = 0;
         for post in all_posts {
             if let Some(i) = self.find_in_index(&post) {
                 self.index[i].checked = true;
                 self.index[i].path = post.path;  // populate path
-                if self.index[i].last_updated < post.last_updated {
+                let should_update = self.index[i].last_updated < post.last_updated;
+                if should_update {
                     self.index[i].last_updated = post.last_updated;
-                    if ! dry_run {
-                        self.index[i].convert(&self.templates.post)?;
-                    }
                     num_updated += 1;
+                }
+                if ! dry_run && (should_update || force) {
+                    self.index[i].convert(&self.templates.post)?;
                 }
             } else {
                 let now = SystemTime::now();
@@ -500,7 +501,7 @@ mod tests {
         ];
         let num_updated;
         {
-            num_updated = blog.update(true).expect("can't update");
+            num_updated = blog.update(true, false).expect("can't update");
         }
         cleanup(&blog.path);
         assert_eq!(num_updated, posts.len() - 1);

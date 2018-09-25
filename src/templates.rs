@@ -100,12 +100,12 @@ impl AllTemplates {
                            path_index: Option<String>) -> Result<Self, TemplateError> {
         let post_path = path_post.unwrap_or(PATH_POST.to_string());
         let index_path = path_index.unwrap_or(PATH_INDEX.to_string());
-        let mut index_template = AllTemplates::make(&index_path, TOC_TEMPLATE)?;
-        index_template.register_escape_fn(no_escape);
+        let mut post_template = AllTemplates::make(&post_path, POST_TEMPLATE)?;
+        post_template.register_escape_fn(no_escape);
 
         Ok(AllTemplates{
-            post: AllTemplates::make(&post_path, POST_TEMPLATE)?,
-            index: index_template
+            post: post_template,
+            index: AllTemplates::make(&index_path, TOC_TEMPLATE)?
         })
     }
 
