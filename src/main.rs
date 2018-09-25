@@ -6,7 +6,7 @@ use std::fs;
 use std::path::PathBuf;
 use getopts::Options;
 
-use wellington::{html_from_markdown, Blog, PostData};
+use wellington::{html_from_markdown, Blog, PostData, IndexedBlogPost};
 use wellington::templates::{AllTemplates, POST_TEMPLATE};
 
 
@@ -49,14 +49,25 @@ fn convert(input_filename: &str, output_filename: &str) {
             std::process::exit(1);
         }
     };
-    let output = match html_from_markdown(&input, Some(&template), "".to_string()) {
+    let output = match html_from_markdown(&input, "".to_string()) {
         Ok(ht) => ht,
         Err(err) => {
             println!("{}", err);
             std::process::exit(1);
         }
     };
-    fs::write(output_filename, output.html).expect("Error writing result");
+    let mut bp = IndexedBlogPost::example();
+    bp.set_title(&output.title);
+
+    let data = PostData::from((output.html.as_str(), &mut bp, ""));
+    let rendered = match data.render(&template) {
+        Ok(ht) => ht,
+        Err(err) => {
+            println!("{}", err);
+            std::process::exit(1);
+        }
+    };
+    fs::write(output_filename, rendered).expect("Error writing result");
 }
 
 

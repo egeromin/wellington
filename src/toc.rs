@@ -14,11 +14,11 @@ pub struct IndexedBlogPost {
     #[serde(skip)]
     path: PathBuf,
     post_url: String, 
-    last_updated: SystemTime,
-    first_published: SystemTime,
+    pub last_updated: SystemTime,
+    pub first_published: SystemTime,
     #[serde(skip)]
     checked: bool,
-    title: Option<String>
+    pub title: Option<String>
 } 
 
 
@@ -71,6 +71,17 @@ impl From<BlogPost> for IndexedBlogPost {
 
 impl IndexedBlogPost {
 
+    pub fn example() -> Self {
+        IndexedBlogPost::from(BlogPost{
+            path: PathBuf::from("/example"), 
+            last_updated: SystemTime::now()}
+            )
+    }
+
+    pub fn set_title(&mut self, title: &Option<String>) {
+        self.title = title.clone();
+    }
+
     fn get_filename_path(&self, file: &str) -> Result<String, BlogError> {
         let mut input_path = self.path.clone();
         input_path.push(file);
@@ -82,25 +93,31 @@ impl IndexedBlogPost {
         }
     }
 
-    fn convert(&mut self, template: &Handlebars) -> Result<(), BlogError> {
+    fn convert(&mut self, template: &Handlebars, index_url: &str) -> Result<(), BlogError> {
         let input_filename = self.get_filename_path("index.md")?;
         let output_filename = self.get_filename_path("index.html")?;
         if let Ok(input) = fs::read_to_string(&input_filename) {
             let output = match html_from_markdown(&input, 
-                                                  Some(template),
                                                   self.post_url.clone()) {
                 Ok(ht) => ht,
                 Err(err) => {
                     return Err(BlogError::ConvertError(format!("{}", err)));
                 }
             };
-            match fs::write(&output_filename, output.html) {
+            self.title = output.title;
+            let data = PostData::from((output.html.as_str(), self, index_url));
+            let rendered = match data.render(template) {
+                Ok(ht) => ht,
+                Err(err) => {
+                    return Err(BlogError::ConvertError(format!("{}", err)));
+                }
+            };
+            match fs::write(&output_filename, rendered) {
                 Err(_) => {
                     return Err(BlogError::WriteError(output_filename));
                 },
                 _ => ()
             };
-            self.title = output.title;
         } else {
             return Err(BlogError::ReadError(input_filename))
         }
@@ -174,6 +191,10 @@ impl Blog {
         let blog = Blog{path, index: vec![], index_url, templates};
         blog.validate_templates()?;
         Ok(blog)
+    }
+
+    pub fn push(&mut self, post: IndexedBlogPost) {
+        self.index.push(post);
     }
 
     fn validate_templates(&self) -> Result<(), TemplateError> {
@@ -388,7 +409,7 @@ impl Blog {
                     num_updated += 1;
                 }
                 if ! dry_run && (should_update || force) {
-                    self.index[i].convert(&self.templates.post)?;
+                    self.index[i].convert(&self.templates.post, &self.index_url)?;
                 }
             } else {
                 let now = SystemTime::now();
@@ -399,7 +420,7 @@ impl Blog {
                     title: None, post_url
                 };
                 if ! dry_run {
-                    new_post.convert(&self.templates.post)?;
+                    new_post.convert(&self.templates.post, &self.index_url)?;
                 }
                 self.index.push(new_post);
                 num_updated += 1;

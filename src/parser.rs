@@ -1,8 +1,10 @@
 use pulldown_cmark::{Event, Tag, html, Parser};
 use std::borrow::Cow;
+use std::time::SystemTime;
 use handlebars::{Handlebars, html_escape};
 
 use sidenote_error::SidenoteError;
+use toc::IndexedBlogPost;
 
 
 pub struct SidenoteParser<'a> {
@@ -160,17 +162,25 @@ impl<'a> Iterator for SidenoteParser<'a> {
 #[derive(Serialize)]
 pub struct PostData<'a> {
     article: &'a str,
-    title: Option<String>
+    title: Option<String>,
+    first_published: SystemTime,
+    last_updated: SystemTime,
+    index_url: String
 }
 
 
 impl<'a> PostData<'a> {
 
     pub fn new(article: &'a str) -> Self {
-        PostData{article, title: None}
+        PostData{
+            article, title: None,
+            first_published: SystemTime::now(),
+            last_updated: SystemTime::now(),
+            index_url: "/".to_string()
+        }
     }
-    
-    fn render(&self, template: &Handlebars) -> Result<String, SidenoteError> {
+
+    pub fn render(&self, template: &Handlebars) -> Result<String, SidenoteError> {
         match template.render("t1", &self) {
             Ok(s) => Ok(s),
             Err(e) => Err(SidenoteError::Template(
@@ -180,6 +190,24 @@ impl<'a> PostData<'a> {
 }
 
 
+impl<'a, 'b, 'c> From<(&'a str, &'b mut IndexedBlogPost, &'c str)> for PostData<'a> {
+
+    fn from(a: (&'a str, &'b mut IndexedBlogPost, &'c str)) -> Self {
+        PostData{
+            article: a.0,
+            first_published: a.1.first_published,
+            last_updated: a.1.last_updated,
+            index_url: a.2.to_string(),
+            title: match a.1.title {
+                Some(ref t) => Some(html_escape(t)),
+                None => None
+            }
+        }
+    }
+}
+
+
+
 pub struct ParsedMarkdown {
     pub html: String,
     pub title: Option<String>
@@ -187,19 +215,18 @@ pub struct ParsedMarkdown {
 
 
 /// Main function to convert markdown to html
-pub fn html_from_markdown(md: &str, template: Option<&Handlebars>,
-                          link_prefix: String) -> Result<ParsedMarkdown, SidenoteError> {
+pub fn html_from_markdown(md: &str, link_prefix: String) -> Result<ParsedMarkdown, SidenoteError> {
     let mut title: Option<String> = None;
-    let mut html_buf = "<article>".to_string();
+    let mut article = "<article>".to_string();
     {
         let mut parser = SidenoteParser::new(Parser::new(md), &mut title);
         parser.set_link_prefix(link_prefix);
         for event in parser {
-            html::push_html(&mut html_buf, vec![event?].into_iter());
+            html::push_html(&mut article, vec![event?].into_iter());
         }
     }
 
-    html_buf.push_str("</section></article>");
+    article.push_str("</section></article>");
 
     let title = match title {
         Some(t) => match t.len() {
@@ -209,17 +236,9 @@ pub fn html_from_markdown(md: &str, template: Option<&Handlebars>,
         None => None
     };
 
-    if let Some(temp) = template {
-        let title_escaped = match &title {
-            Some(t) => Some(html_escape(t)),
-            None => None
-        }; // escape only title
-        html_buf = PostData{article: &html_buf, title: title_escaped}.render(temp)?;
-    }
+    Ok(ParsedMarkdown{html: article, title})
 
-    Ok(ParsedMarkdown{html: html_buf, title})
-
-}  // TODO: clean up this function!
+} 
 
 
 #[cfg(test)]
@@ -241,7 +260,7 @@ Here is some text with { badly formatted {sidenotes}.
 
 "#;
 
-        let html_buf = html_from_markdown(markdown_str, None, "".to_string());
+        let html_buf = html_from_markdown(markdown_str, "".to_string());
         assert!(html_buf.is_err());
     }
 
@@ -255,7 +274,7 @@ hello
 Here is some text with { a sidenote `and code nested`
     }"#;
 
-        assert!(html_from_markdown(markdown_str, None, "".to_string()).is_err());
+        assert!(html_from_markdown(markdown_str, "".to_string()).is_err());
     }
 
     #[test]
@@ -266,7 +285,7 @@ hello
 
 Here is some text with ` code {and curly braces nested`
 "#;
-        assert_eq!(html_from_markdown(markdown_str, None, "".to_string()).expect("Should succeed").html,
+        assert_eq!(html_from_markdown(markdown_str, "".to_string()).expect("Should succeed").html,
             r#"<article>
 <h1>hello</h1><section>
 <p>Here is some text with <code>code {and curly braces nested</code></p>
@@ -291,7 +310,7 @@ spanning multiple lines, which is also supported
 
 "#;
 
-        let html_buf = html_from_markdown(markdown_str, None, "".to_string()).expect("Should succeed");
+        let html_buf = html_from_markdown(markdown_str, "".to_string()).expect("Should succeed");
         assert_eq!(
             html_buf.html,
             r#"<article>
@@ -327,7 +346,7 @@ code_with{
 ```
 
 "#;
-        let html_buf = html_from_markdown(markdown_str, None, "".to_string()).expect("Shouldn't fail!");
+        let html_buf = html_from_markdown(markdown_str, "".to_string()).expect("Shouldn't fail!");
 
         assert_eq!(
             html_buf.html,
@@ -371,7 +390,7 @@ hello
 
 ![image](https://image)
 "#;
-        assert_eq!(html_from_markdown(md, None, "".to_string()).expect("should work!").html, r#"<article>
+        assert_eq!(html_from_markdown(md, "".to_string()).expect("should work!").html, r#"<article>
 <h1>hello</h1><section>
 <p><img src="https://image" alt="" /><br /><span class="image-caption">image</span></p>
 </section></article>"#);
@@ -398,7 +417,7 @@ hello
 
 ![image](relative-image.jpg)
 "#;
-        assert_eq!(html_from_markdown(md, None, "/prefix/".to_string()).expect("should work!").html, r#"<article>
+        assert_eq!(html_from_markdown(md, "/prefix/".to_string()).expect("should work!").html, r#"<article>
 <h1>hello</h1><section>
 <p><a href="/prefix/relative-link">link</a></p>
 <p><img src="https://image" alt="" /><br /><span class="image-caption">image</span></p>

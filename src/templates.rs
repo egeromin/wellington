@@ -1,8 +1,12 @@
 use std::fmt;
 use std::fs;
 use std::io;
+use std::time::SystemTime;
 use handlebars::{Handlebars, no_escape};
-use serde::Serialize;
+use handlebars::{RenderContext, Helper, Context, HelperResult, Output, RenderError};
+use chrono::{DateTime, Utc};
+
+use serde::{Serialize, Deserialize};
 
 
 pub const TOC_TEMPLATE: &[u8]  = include_bytes!("../templates/toc.html");
@@ -46,6 +50,7 @@ pub struct AllTemplates {
 }
 
 
+
 impl AllTemplates {
 
     fn read_template(path: &str, fallback: &[u8]) -> Result<String, TemplateError> {
@@ -61,8 +66,40 @@ impl AllTemplates {
         }
     }
 
+    fn as_date(h: &Helper, 
+               _: &Handlebars, 
+               _: &Context, 
+               _: &mut RenderContext, 
+               out: &mut Output) -> HelperResult {
+
+        let param = match h.param(0) {
+            Some(p) => p,
+            _ => {
+                return Err(RenderError::new(
+                    "You must provide a parameter to the as-date template helper"));
+            }
+        };
+
+        let unpack_error = RenderError::new(
+            "Couldn't unpack value passed to as-date. Are you sure it's a SystemTime object?"
+            );
+
+        let stime = match SystemTime::deserialize(param.value()) {
+            Ok(t) => t,
+            _ => { return Err(unpack_error); }
+        };
+
+        let datetime = DateTime::<Utc>::from(stime);
+        match out.write(&format!("{}", datetime.format("%d %B %Y at %H:%M UTC"))) {
+            Ok(_) => Ok(()),
+            _ => Err(RenderError::new(
+                "Coultn't write"))
+        }
+    }
+
     pub fn make_template(template_str: &str, path: &str) -> Result<Handlebars, TemplateError> {
         let mut template = Handlebars::new();
+        template.register_helper("as-date", Box::new(AllTemplates::as_date));
         match template.register_template_string("t1", template_str) {
             Ok(_) => Ok(template),
             Err(_) => Err(TemplateError{
@@ -123,7 +160,7 @@ impl From<(Handlebars, Handlebars)> for AllTemplates {
 
 #[cfg(test)]
 mod tests {
-    use toc::Blog;
+    use toc::{Blog, IndexedBlogPost};
     use parser::PostData;
     use std::path::PathBuf;
 
@@ -134,7 +171,8 @@ mod tests {
         let templates = AllTemplates::new().expect("Can't get templates");
         let article = "some article";
         let test_post = PostData::new(&article);
-        let test_index = Blog::new(PathBuf::from("/example")).unwrap();
+        let mut test_index = Blog::new(PathBuf::from("/example")).unwrap();
+        test_index.push(IndexedBlogPost::example());
         assert!(templates.validate_both::<PostData<'static>, Blog>(
                 &test_post, &test_index).is_ok());
     }

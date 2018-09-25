@@ -3,10 +3,14 @@
 <link rel="stylesheet" href="/tufte.css" />
 </head>
 <body>
-    <a href={{index_url}}>To Index</a>
-    <h1>Da Blog</h1>
+    <h1>Contents</h1>
     <ul>
-    {{#each index}}<li><a href="{{post_url}}">{{title}}</a></li>{{/each}}
+{{#each index}}
+        <li>
+            <a href="{{post_url}}">{{title}}</a>, 
+            {{as-date first_published}}
+        </li>
+{{/each}}
     </ul>
 </body>
 </html>
