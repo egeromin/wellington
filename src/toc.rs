@@ -3,11 +3,9 @@ use std::fs;
 use std::path::PathBuf;
 use std::time::SystemTime;
 use csv::{WriterBuilder, ReaderBuilder};
-use handlebars::Handlebars;
 
 use parser::html_from_markdown;
-
-const TOC_TEMPLATE: &[u8]  = include_bytes!("../templates/toc.html");
+use templates::{AllTemplates, TemplateError, PATH_POST, PATH_INDEX};
 
 
 #[derive(Debug, PartialEq, Clone, Deserialize, Serialize)]
@@ -120,7 +118,9 @@ impl IndexedBlogPost {
 pub struct Blog {
     index: Vec<IndexedBlogPost>,
     path: PathBuf,
-    index_url: String
+    index_url: String,
+    #[serde(skip)]
+    templates: AllTemplates
 }
 
 
@@ -134,7 +134,9 @@ pub enum BlogError {
     WriteIndexError(String),
     WriteTocError(String),
     NoInit,
-    CantInit
+    InitWrite,
+    InitTemplate(TemplateError),
+    InitCopy(String)
 } // TODO: refactor using a single error type and an errorKind
 
 
@@ -150,7 +152,10 @@ impl fmt::Display for BlogError {
             BlogError::ReadIndexError(err) => write!(f, "Encountered an error while reading the index: {}", err),
             BlogError::WriteTocError(err) => write!(f, "Couldn't write table of contents {}", err),
             BlogError::NoInit => write!(f, "Attempting to sync an uninitialised blog. Please call `init` first"),
-            BlogError::CantInit => write!(f, "Couldn't initialise blog. Do you write permission?")
+            BlogError::InitWrite => write!(f, "Couldn't initialise blog. Do you have write permission?"),
+            BlogError::InitTemplate(e) => 
+                write!(f, "Supplied invalid template: {}", e),
+            BlogError::InitCopy(path) => write!(f, "Couldn't copy template {}. Do you have write permission / does the template exist?", path),
         }
     }
 }
@@ -158,7 +163,8 @@ impl fmt::Display for BlogError {
 
 impl Blog {
 
-    pub fn new(path: PathBuf) -> Blog { 
+    pub fn new(path: PathBuf) -> Result<Self, TemplateError> { 
+        let templates = AllTemplates::new()?;
         let index_url;
         {
             index_url = format!("/{}/", match &path.file_name() {
@@ -169,7 +175,18 @@ impl Blog {
                 None => ""
             });
         }
-        Blog{path, index: vec![], index_url}
+        let blog = Blog{path, index: vec![], index_url, templates};
+        blog.validate_templates()?;
+        Ok(blog)
+    }
+
+    fn validate_templates(&self) -> Result<(), TemplateError> {
+        self.templates.validate_both::<IndexedBlogPost, Blog>(
+            &IndexedBlogPost::example(), &self)
+    }
+
+    fn set_templates(&mut self, templates: AllTemplates) {
+        self.templates = templates;
     }
 
     fn get_index_path(&self) -> PathBuf {
@@ -205,16 +222,45 @@ impl Blog {
         Ok(())      
     }
 
-    pub fn init(&self) -> Result<(), BlogError> {
-        match fs::File::create(self.get_index_path()) {
+    fn install_template(&self, template_path: &str, target_name: &str) 
+    -> Result<(), BlogError> {
+        let mut target_path = self.path.clone();
+        target_path.push(target_name);
+        match fs::copy(template_path, target_path) {
             Ok(_) => Ok(()),
-            _ => Err(BlogError::CantInit)
+            _ => Err(BlogError::InitCopy(template_path.to_string()))
         }
+    }
+
+    pub fn init(&mut self, post: Option<String>, index: Option<String>) -> Result<(), BlogError> {
+        match fs::File::create(self.get_index_path()) {
+            Ok(_) => (),
+            _ => {
+                return Err(BlogError::InitWrite);
+            }
+        };
+        let templates = match AllTemplates::make_from_paths(post.clone(), index.clone()) {
+            Ok(t) => t,
+            Err(e) => {
+                return Err(BlogError::InitTemplate(e));
+            }, 
+        };
+        self.set_templates(templates);
+        match self.validate_templates() { 
+            Err(e) => {
+                return Err(BlogError::InitTemplate(e));
+            }, 
+            _ => ()
+        };
+        match &post { Some(s) => self.install_template(s, PATH_POST)?, _ => () };
+        match &index { Some(s) => self.install_template(s, PATH_INDEX)?, _ => () };
+        Ok(())
     }
 
     pub fn sync(&mut self) -> Result<usize, BlogError> {
         self.load()?;
         let num_updated = self.update(false)?;
+
         if num_updated > 0 {
             self.write_toc()?;
             self.persist()?;
@@ -245,9 +291,8 @@ impl Blog {
     }
 
     // Write table of contents HTML
-    fn render_index(&self, template: &str) -> Result<String, BlogError> {
-        let handlebars = Handlebars::new();
-        match handlebars.render_template(template, &self) {
+    fn render_index(&self) -> Result<String, BlogError> {
+        match self.templates.index.render("t1", &self) {
             Ok(s) => Ok(s),
             Err(e) => Err(BlogError::WriteTocError(
                 format!("Couldn't render template: {:?}", e)))
@@ -255,8 +300,7 @@ impl Blog {
     }
 
     fn write_toc(&self) -> Result<(), BlogError> {
-        let template = String::from_utf8_lossy(TOC_TEMPLATE);
-        match fs::write(self.get_toc_path(), self.render_index(&template)?) {
+        match fs::write(self.get_toc_path(), self.render_index()?) {
             Ok(_) => Ok(()),
             Err(e) => Err(BlogError::WriteTocError(format!(
                 "Couldn't write to file: {:?}", e)))
@@ -384,6 +428,9 @@ mod tests {
     use std::fs;
     use std::path::PathBuf;
     use std::time::{SystemTime, UNIX_EPOCH};
+    use handlebars::Handlebars;
+
+    use templates::AllTemplates;
     use super::{Blog, IndexedBlogPost, BlogPost};
 
     static POSTS: &[&'static str] = &["irkutsk", "krasnoyarsk", "yekaterinburg"];
@@ -426,7 +473,7 @@ mod tests {
 
     #[test]
     fn can_list_dirs() {
-       let blog = Blog::new(create_fake_dirs("blog"));
+       let blog = Blog::new(create_fake_dirs("blog")).unwrap();
         let posts = blog.list_posts().expect("bla");
         let post_names = posts.iter()
             .map(|x| x.path
@@ -441,7 +488,7 @@ mod tests {
 
     #[test]
     fn can_update() {
-        let mut blog = Blog::new(create_fake_dirs("blog2"));
+        let mut blog = Blog::new(create_fake_dirs("blog2")).unwrap();
         let posts = blog.list_posts().expect("can't list posts");
         blog.index = vec![
             IndexedBlogPost::from(BlogPost{
@@ -485,8 +532,8 @@ mod tests {
 
     #[test]
     fn write_read_index() {
-        let blog_path = create_fake_dirs("blog");
-        let mut blog = Blog::new(blog_path.clone());
+        let blog_path = create_fake_dirs("blog9");
+        let mut blog = Blog::new(blog_path.clone()).unwrap();
         let posts = blog.list_posts().expect("can't list posts");
         blog.index = vec![
             IndexedBlogPost::from(BlogPost{
@@ -504,7 +551,7 @@ mod tests {
         // reset, since absolute paths are not persisted
 
         blog.persist().expect("can't persist");
-        let mut blog2 = Blog::new(blog_path.clone());
+        let mut blog2 = Blog::new(blog_path.clone()).unwrap();
         blog2.load().expect("can't load");
         cleanup(&blog_path);
         assert_eq!(blog.index, blog2.index);
@@ -512,8 +559,8 @@ mod tests {
 
     #[test]
     fn render_index() {
-        let blog_path = create_fake_dirs("blog");
-        let mut blog = Blog::new(blog_path.clone());
+        let blog_path = create_fake_dirs("blog10");
+        let mut blog = Blog::new(blog_path.clone()).expect("Can't load templates");
         let posts = blog.list_posts().expect("can't list posts");
         blog.index = vec![
             IndexedBlogPost::from(BlogPost{
@@ -524,8 +571,11 @@ mod tests {
         let title = "A title";
         blog.index[0].title = Some(title.to_string());
         // let template = "{{title}}";
-        let template = "{{#each index}}{{title}}{{/each}}";
-        let rendered = blog.render_index(template).expect("Couldn't render");
+        let mut template = Handlebars::new();
+        template.register_template_string("t1", "{{#each index}}{{title}}{{/each}}").unwrap();
+        // let template = "{{#each index}}{{title}}{{/each}}";
+        blog.set_templates(AllTemplates::from((Handlebars::new(), template)));
+        let rendered = blog.render_index().expect("Couldn't render");
         assert_eq!(rendered, format!("{}", title));
         cleanup(&blog_path);
     }

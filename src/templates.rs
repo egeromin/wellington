@@ -1,16 +1,15 @@
 use std::fmt;
-use std::path::PathBuf;
 use std::fs;
 use std::io;
 use handlebars::{Handlebars, no_escape};
 use serde::Serialize;
 
-use toc::{IndexedBlogPost, Blog};
-
 
 const TOC_TEMPLATE: &[u8]  = include_bytes!("../templates/toc.html");
 const POST_TEMPLATE: &[u8]  = include_bytes!("../templates/post.html");
 
+pub const PATH_POST: &str = ".post_template.html";
+pub const PATH_INDEX: &str = ".index_template.html";
 
 #[derive(Debug, Copy, Clone)]
 pub enum ErrorKind {
@@ -42,8 +41,8 @@ impl TemplateError {
 
 
 pub struct AllTemplates {
-    post: Handlebars,
-    index: Handlebars
+    pub post: Handlebars,
+    pub index: Handlebars,
 }
 
 
@@ -84,44 +83,58 @@ impl AllTemplates {
         }
     }
 
-    fn make_and_validate<T>(path: &str, fallback: &[u8], test: &T) -> Result<Handlebars, TemplateError> 
-        where T: Serialize {
+    pub fn validate_both<T, U>(&self, test_post: &T, test_index: &U) -> Result<(), TemplateError>
+        where T: Serialize, U: Serialize {
+        AllTemplates::validate::<T>(&self.post, test_post, &PATH_POST)?;
+        AllTemplates::validate::<U>(&self.index, test_index, &PATH_INDEX)?;
+        Ok(())
+    }
+
+    fn make(path: &str, fallback: &[u8]) -> Result<Handlebars, TemplateError> {
         let template_str = AllTemplates::read_template(path, fallback)?;
         let template = AllTemplates::make_template(&template_str, path)?;
-        AllTemplates::validate::<T>(&template, test, path)?;
         Ok(template)
     }
 
-    pub fn make_from_paths(post_path: &str, index_path: &str) -> Result<Self, TemplateError> {
-        let test_post = IndexedBlogPost::example();
-        let test_index = Blog::new(PathBuf::from("/example"));
-        let mut index_template = AllTemplates::make_and_validate::<Blog>(&index_path, 
-                                                                     TOC_TEMPLATE, 
-                                                                     &test_index)?;
+    pub fn make_from_paths(path_post: Option<String>, 
+                           path_index: Option<String>) -> Result<Self, TemplateError> {
+        let post_path = path_post.unwrap_or(PATH_POST.to_string());
+        let index_path = path_index.unwrap_or(PATH_INDEX.to_string());
+        let mut index_template = AllTemplates::make(&index_path, TOC_TEMPLATE)?;
         index_template.register_escape_fn(no_escape);
 
         Ok(AllTemplates{
-            post: AllTemplates::make_and_validate::<IndexedBlogPost>(&post_path, 
-                                                                     POST_TEMPLATE, 
-                                                                     &test_post)?,
+            post: AllTemplates::make(&post_path, POST_TEMPLATE)?,
             index: index_template
         })
     }
 
-    pub fn make() -> Result<Self, TemplateError> {
-        let post_path = ".template_post.html";
-        let index_path = ".template_index.html";
-        AllTemplates::make_from_paths(&post_path, &index_path)
+    pub fn new() -> Result<Self, TemplateError> {
+        AllTemplates::make_from_paths(None, None)
+    }
+}
+
+impl From<(Handlebars, Handlebars)> for AllTemplates {
+    fn from(templates: (Handlebars, Handlebars)) -> Self {
+        AllTemplates{post: templates.0, index: templates.1}
     }
 }
 
 
 #[cfg(test)]
 mod tests {
+    use toc::{IndexedBlogPost, Blog};
+    use std::path::PathBuf;
+
     use super::AllTemplates;
 
+    #[test]
     fn make_without_error() {
-        assert!(AllTemplates::make().is_ok());
+        let templates = AllTemplates::new().expect("Can't get templates");
+        let test_post = IndexedBlogPost::example();
+        let test_index = Blog::new(PathBuf::from("/example")).unwrap();
+        assert!(templates.validate_both::<IndexedBlogPost, Blog>(
+                &test_post, &test_index).is_ok());
     }
 }
 

@@ -4,19 +4,23 @@ extern crate wellington;
 use std::env;
 use std::fs;
 use std::path::PathBuf;
+use getopts::Options;
 
 use wellington::{html_from_markdown, Blog};
 
 
-fn usage(program: &str) -> String {
+fn usage(program: &str, init_opts: &str) -> String {
     format!(r#"Usage: {} [command]"
 
 Where command is one of:
     convert <input> <output>    Convert input markdown file to output html file
-    init                        Initialise the current directory as a blog
+
     sync                        Sync all blog posts in the current blog directory, 
                                 refreshing the table of contents
-"#, program)
+
+    init <options>              Initialise the current directory as a blog. There
+                                are the following options:{}
+"#, program, init_opts)
 }
 
 fn convert(input_filename: &str, output_filename: &str) {
@@ -43,17 +47,29 @@ fn current_dir() -> PathBuf {
 }
 
 
-fn init() {
-    let blog = Blog::new(current_dir());
-    match blog.init() {
+fn init(post: Option<String>, index: Option<String>) {
+    let mut blog = match Blog::new(current_dir()) {
+        Ok(b) => b,
+        Err(e) => {
+            println!("{}", e);
+            std::process::exit(1);
+        }
+    };
+    match blog.init(post, index) {
         Ok(_) => println!("Initialised new empty blog"),
-        _ => println!("Couldn't initialise blog. Do you write permission?")
+        Err(e)  => println!("{}", e)
     }
 }
 
 
 fn sync() {
-    let mut blog = Blog::new(current_dir());
+    let mut blog = match Blog::new(current_dir()) {
+        Ok(b) => b,
+        Err(e) => {
+            println!("{}", e);
+            std::process::exit(1);
+        }
+    };
     match blog.sync() {
         Ok(i) => println!("Updated {} posts", i),
         Err(err) => {
@@ -66,9 +82,14 @@ fn sync() {
 
 fn main() {
     let args :Vec<String> = env::args().collect();
+    let mut init_opts = Options::new();
+    init_opts.optopt("p", "post", "Template for rendering individual posts", 
+                     "POST_TEMPLATE");
+    init_opts.optopt("i", "index", "Template for rendering the table of contents", 
+                     "INDEX_TEMPLATE");
 
     if args.len() == 1 {
-        eprintln!("{}", usage(&args[0]));
+        eprintln!("{}", usage(&args[0], &init_opts.usage("")));
         std::process::exit(1);
     }
     
@@ -82,7 +103,14 @@ fn main() {
     } else if command == "sync" {
         sync();
     } else if command == "init" {
-        init();
+        let matches = match init_opts.parse(&args[1..]) {
+            Ok(m) => m,
+            Err(e) => {
+                eprintln!("Error: {}", e.to_string());
+                std::process::exit(1);
+            }
+        };
+        init(matches.opt_str("post"), matches.opt_str("index"));
     } else {
         eprintln!("I don't recognise this command :(");
     }
