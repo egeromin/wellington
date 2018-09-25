@@ -86,7 +86,9 @@ impl IndexedBlogPost {
         let input_filename = self.get_filename_path("index.md")?;
         let output_filename = self.get_filename_path("index.html")?;
         if let Ok(input) = fs::read_to_string(&input_filename) {
-            let output = match html_from_markdown(&input, Some(template)) {
+            let output = match html_from_markdown(&input, 
+                                                  Some(template),
+                                                  self.post_url.clone()) {
                 Ok(ht) => ht,
                 Err(err) => {
                     return Err(BlogError::ConvertError(format!("{}", err)));

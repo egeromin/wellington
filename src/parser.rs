@@ -7,6 +7,7 @@ use sidenote_error::SidenoteError;
 
 pub struct SidenoteParser<'a> {
     parser: Parser<'a>,
+    link_prefix: String,
     pub in_code_block: bool,
     pub in_sidenote_block: bool,
     pub remaining_text: String,
@@ -31,6 +32,7 @@ impl<'a> SidenoteParser<'a> {
         SidenoteParser{
             parser,
             title,
+            link_prefix: "".to_string(),
             in_code_block: false,
             in_sidenote_block: false,
             remaining_text: String::from(""),
@@ -38,6 +40,10 @@ impl<'a> SidenoteParser<'a> {
             in_image: false,
             remaining_events: vec![]
         }
+    }
+
+    fn set_link_prefix(&mut self, link_prefix: String) {
+        self.link_prefix = link_prefix;
     }
 
     fn parse_code_tag(&mut self, start: bool, on_success_return: Event<'a>) -> 
@@ -74,6 +80,17 @@ impl<'a> SidenoteParser<'a> {
         Event::InlineHtml(Cow::from("<pre><code class=\"code\">"))
     }
 
+    fn link_is_relative(link: &Cow<str>) -> bool {
+        !(link.contains("://") || (link.chars().next() == Some('/')))
+    }
+
+    fn rewrite_link<'b>(&'a self, mut link: Cow<'b, str>) -> Cow<'b, str> {
+        if SidenoteParser::link_is_relative(&link) {
+            link.to_mut().insert_str(0, &self.link_prefix);
+        }
+        link
+    }
+
     fn parse_next_event(&mut self, event: Event<'a>) -> 
         Result<Event<'a>, SidenoteError> {
         match event {
@@ -89,8 +106,10 @@ impl<'a> SidenoteParser<'a> {
                 },
                 Tag::Image(url, title) => {
                     self.in_image = true;
-                    Ok(Event::Start(Tag::Image(url, title)))
+                    Ok(Event::Start(Tag::Image(self.rewrite_link(url), title)))
                 },
+                Tag::Link(link, title) => 
+                    Ok(Event::Start(Tag::Link(self.rewrite_link(link), title))),
                 _ => Ok(Event::Start(tag))
             },
             Event::End(tag) => match tag {
@@ -106,6 +125,8 @@ impl<'a> SidenoteParser<'a> {
                     self.in_image = false;
                     Ok(Event::End(Tag::Image(url, title)))
                 },
+                Tag::Link(link, title) => 
+                    Ok(Event::End(Tag::Link(link, title))),
                 _ => Ok(Event::End(tag))
             },
             _ => Ok(event)
@@ -166,11 +187,13 @@ pub struct ParsedMarkdown {
 
 
 /// Main function to convert markdown to html
-pub fn html_from_markdown(md: &str, template: Option<&Handlebars>) -> Result<ParsedMarkdown, SidenoteError> {
+pub fn html_from_markdown(md: &str, template: Option<&Handlebars>,
+                          link_prefix: String) -> Result<ParsedMarkdown, SidenoteError> {
     let mut title: Option<String> = None;
     let mut html_buf = "<article>".to_string();
     {
-        let parser = SidenoteParser::new(Parser::new(md), &mut title);
+        let mut parser = SidenoteParser::new(Parser::new(md), &mut title);
+        parser.set_link_prefix(link_prefix);
         for event in parser {
             html::push_html(&mut html_buf, vec![event?].into_iter());
         }
@@ -201,6 +224,7 @@ pub fn html_from_markdown(md: &str, template: Option<&Handlebars>) -> Result<Par
 
 #[cfg(test)]
 mod tests {
+    use std::borrow::Cow;
     use pulldown_cmark::Parser;
     use super::{html_from_markdown, SidenoteParser};
 
@@ -217,7 +241,7 @@ Here is some text with { badly formatted {sidenotes}.
 
 "#;
 
-        let html_buf = html_from_markdown(markdown_str, None);
+        let html_buf = html_from_markdown(markdown_str, None, "".to_string());
         assert!(html_buf.is_err());
     }
 
@@ -231,7 +255,7 @@ hello
 Here is some text with { a sidenote `and code nested`
     }"#;
 
-        assert!(html_from_markdown(markdown_str, None).is_err());
+        assert!(html_from_markdown(markdown_str, None, "".to_string()).is_err());
     }
 
     #[test]
@@ -242,7 +266,7 @@ hello
 
 Here is some text with ` code {and curly braces nested`
 "#;
-        assert_eq!(html_from_markdown(markdown_str, None).expect("Should succeed").html,
+        assert_eq!(html_from_markdown(markdown_str, None, "".to_string()).expect("Should succeed").html,
             r#"<article>
 <h1>hello</h1><section>
 <p>Here is some text with <code>code {and curly braces nested</code></p>
@@ -267,7 +291,7 @@ spanning multiple lines, which is also supported
 
 "#;
 
-        let html_buf = html_from_markdown(markdown_str, None).expect("Should succeed");
+        let html_buf = html_from_markdown(markdown_str, None, "".to_string()).expect("Should succeed");
         assert_eq!(
             html_buf.html,
             r#"<article>
@@ -303,7 +327,7 @@ code_with{
 ```
 
 "#;
-        let html_buf = html_from_markdown(markdown_str, None).expect("Shouldn't fail!");
+        let html_buf = html_from_markdown(markdown_str, None, "".to_string()).expect("Shouldn't fail!");
 
         assert_eq!(
             html_buf.html,
@@ -347,9 +371,38 @@ hello
 
 ![image](https://image)
 "#;
-        assert_eq!(html_from_markdown(md, None).expect("should work!").html, r#"<article>
+        assert_eq!(html_from_markdown(md, None, "".to_string()).expect("should work!").html, r#"<article>
 <h1>hello</h1><section>
 <p><img src="https://image" alt="" /><br /><span class="image-caption">image</span></p>
+</section></article>"#);
+    }
+
+    #[test]
+    fn check_absolute_links() {
+        assert!(SidenoteParser::link_is_relative(&Cow::from("link.jpg")));
+        assert!(SidenoteParser::link_is_relative(&Cow::from("etc/link.jpg")));
+        assert!(!SidenoteParser::link_is_relative(&Cow::from("/etc/link.jpg")));
+        assert!(!SidenoteParser::link_is_relative(&Cow::from("https://link.jpg")));
+    }
+
+
+    #[test]
+    fn can_rewrite_links() {
+        let md = r#"
+hello
+=====
+
+[link](relative-link)
+
+![image](https://image)
+
+![image](relative-image.jpg)
+"#;
+        assert_eq!(html_from_markdown(md, None, "/prefix/".to_string()).expect("should work!").html, r#"<article>
+<h1>hello</h1><section>
+<p><a href="/prefix/relative-link">link</a></p>
+<p><img src="https://image" alt="" /><br /><span class="image-caption">image</span></p>
+<p><img src="/prefix/relative-image.jpg" alt="" /><br /><span class="image-caption">image</span></p>
 </section></article>"#);
     }
 }

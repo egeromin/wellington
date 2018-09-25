@@ -45,7 +45,7 @@ fn convert(input_filename: &str, output_filename: &str) {
             std::process::exit(1);
         }
     };
-    let output = match html_from_markdown(&input, Some(&template)) {
+    let output = match html_from_markdown(&input, Some(&template), "".to_string()) {
         Ok(ht) => ht,
         Err(err) => {
             println!("{}", err);
