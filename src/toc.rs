@@ -3,8 +3,9 @@ use std::fs;
 use std::path::PathBuf;
 use std::time::SystemTime;
 use csv::{WriterBuilder, ReaderBuilder};
+use handlebars::Handlebars;
 
-use parser::html_from_markdown;
+use parser::{html_from_markdown, PostData};
 use templates::{AllTemplates, TemplateError, PATH_POST, PATH_INDEX};
 
 
@@ -70,13 +71,6 @@ impl From<BlogPost> for IndexedBlogPost {
 
 impl IndexedBlogPost {
 
-    pub fn example() -> Self {
-        IndexedBlogPost::from(BlogPost{
-            path: PathBuf::from("/example"),
-            last_updated: SystemTime::UNIX_EPOCH
-        })
-    } // example, for testing
-
     fn get_filename_path(&self, file: &str) -> Result<String, BlogError> {
         let mut input_path = self.path.clone();
         input_path.push(file);
@@ -88,11 +82,11 @@ impl IndexedBlogPost {
         }
     }
 
-    fn convert(&mut self) -> Result<(), BlogError> {
+    fn convert(&mut self, template: &Handlebars) -> Result<(), BlogError> {
         let input_filename = self.get_filename_path("index.md")?;
         let output_filename = self.get_filename_path("index.html")?;
         if let Ok(input) = fs::read_to_string(&input_filename) {
-            let output = match html_from_markdown(&input, true) {
+            let output = match html_from_markdown(&input, Some(template)) {
                 Ok(ht) => ht,
                 Err(err) => {
                     return Err(BlogError::ConvertError(format!("{}", err)));
@@ -181,8 +175,10 @@ impl Blog {
     }
 
     fn validate_templates(&self) -> Result<(), TemplateError> {
-        self.templates.validate_both::<IndexedBlogPost, Blog>(
-            &IndexedBlogPost::example(), &self)
+        let article = "some article";
+        let test_post = PostData::new(&article);
+        self.templates.validate_both::<PostData<'static>, Blog>(
+            &test_post, &self)
     }
 
     fn set_templates(&mut self, templates: AllTemplates) {
@@ -387,7 +383,7 @@ impl Blog {
                 if self.index[i].last_updated < post.last_updated {
                     self.index[i].last_updated = post.last_updated;
                     if ! dry_run {
-                        self.index[i].convert()?;
+                        self.index[i].convert(&self.templates.post)?;
                     }
                     num_updated += 1;
                 }
@@ -400,7 +396,7 @@ impl Blog {
                     title: None, post_url
                 };
                 if ! dry_run {
-                    new_post.convert()?;
+                    new_post.convert(&self.templates.post)?;
                 }
                 self.index.push(new_post);
                 num_updated += 1;

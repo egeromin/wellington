@@ -5,8 +5,8 @@ use handlebars::{Handlebars, no_escape};
 use serde::Serialize;
 
 
-const TOC_TEMPLATE: &[u8]  = include_bytes!("../templates/toc.html");
-const POST_TEMPLATE: &[u8]  = include_bytes!("../templates/post.html");
+pub const TOC_TEMPLATE: &[u8]  = include_bytes!("../templates/toc.html");
+pub const POST_TEMPLATE: &[u8]  = include_bytes!("../templates/post.html");
 
 pub const PATH_POST: &str = ".post_template.html";
 pub const PATH_INDEX: &str = ".index_template.html";
@@ -61,7 +61,7 @@ impl AllTemplates {
         }
     }
 
-    fn make_template(template_str: &str, path: &str) -> Result<Handlebars, TemplateError> {
+    pub fn make_template(template_str: &str, path: &str) -> Result<Handlebars, TemplateError> {
         let mut template = Handlebars::new();
         match template.register_template_string("t1", template_str) {
             Ok(_) => Ok(template),
@@ -72,7 +72,7 @@ impl AllTemplates {
         }
     }
 
-    fn validate<T>(template: &Handlebars, test: &T, path: &str) -> Result<(), TemplateError>
+    pub fn validate<T>(template: &Handlebars, test: &T, path: &str) -> Result<(), TemplateError>
         where T: Serialize {
         match template.render("t1", test) {
             Ok(_) => Ok(()),
@@ -123,7 +123,8 @@ impl From<(Handlebars, Handlebars)> for AllTemplates {
 
 #[cfg(test)]
 mod tests {
-    use toc::{IndexedBlogPost, Blog};
+    use toc::Blog;
+    use parser::PostData;
     use std::path::PathBuf;
 
     use super::AllTemplates;
@@ -131,9 +132,10 @@ mod tests {
     #[test]
     fn make_without_error() {
         let templates = AllTemplates::new().expect("Can't get templates");
-        let test_post = IndexedBlogPost::example();
+        let article = "some article";
+        let test_post = PostData::new(&article);
         let test_index = Blog::new(PathBuf::from("/example")).unwrap();
-        assert!(templates.validate_both::<IndexedBlogPost, Blog>(
+        assert!(templates.validate_both::<PostData<'static>, Blog>(
                 &test_post, &test_index).is_ok());
     }
 }

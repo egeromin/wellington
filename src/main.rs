@@ -6,7 +6,8 @@ use std::fs;
 use std::path::PathBuf;
 use getopts::Options;
 
-use wellington::{html_from_markdown, Blog};
+use wellington::{html_from_markdown, Blog, PostData};
+use wellington::templates::{AllTemplates, POST_TEMPLATE};
 
 
 fn usage(program: &str, init_opts: &str) -> String {
@@ -23,9 +24,28 @@ Where command is one of:
 "#, program, init_opts)
 }
 
+
 fn convert(input_filename: &str, output_filename: &str) {
     let input = fs::read_to_string(input_filename).expect("Error reading input file");
-    let output = match html_from_markdown(&input, true) {
+    let post_template = String::from_utf8_lossy(POST_TEMPLATE);
+    let template = match AllTemplates::make_template(&post_template, "default-template") {
+        Ok(t) => t,
+        Err(e) => {
+            eprintln!("{}", e);
+            std::process::exit(1);
+        }
+    };
+    let article = "some article";
+    match AllTemplates::validate::<PostData<'static>>(&template, 
+                                                      &PostData::new(&article),
+                                                      "default-path") {
+        Ok(t) => t,
+        Err(e) => {
+            eprintln!("{}", e);
+            std::process::exit(1);
+        }
+    };
+    let output = match html_from_markdown(&input, Some(&template)) {
         Ok(ht) => ht,
         Err(err) => {
             println!("{}", err);
@@ -115,3 +135,4 @@ fn main() {
         eprintln!("I don't recognise this command :(");
     }
 }
+

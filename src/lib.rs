@@ -13,6 +13,6 @@ mod sidenotes;
 mod toc;
 pub mod templates;
 
-pub use parser::{html_from_markdown, ParsedMarkdown};
+pub use parser::{html_from_markdown, ParsedMarkdown, PostData};
 pub use toc::Blog;
 
