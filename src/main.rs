@@ -8,10 +8,11 @@ use getopts::Options;
 
 use wellington::{html_from_markdown, Blog, PostData, IndexedBlogPost};
 use wellington::templates::{AllTemplates, POST_TEMPLATE};
+use wellington::rss::CoreData;
 
 
 fn usage(program: &str, init_opts: &str) -> String {
-    format!(r#"Usage: {} [command]"
+    format!(r#"Usage: {} [command]
 
 Where command is one of:
     convert <input> <output>    Convert input markdown file to output html file
@@ -23,8 +24,8 @@ Where command is one of:
                                 won't be re-rendered, unless you use the -f flag. 
                                 Use this flag when changing templates, for example.
 
-    init <options>              Initialise the current directory as a blog. There
-                                are the following options:{}
+    init <options>              Initialise the current directory as a blog. You must 
+                                provide the following options:{}
 "#, program, init_opts)
 }
 
@@ -82,7 +83,7 @@ fn current_dir() -> PathBuf {
 }
 
 
-fn init(post: Option<String>, index: Option<String>) {
+fn init(core_data: CoreData, post: Option<String>, index: Option<String>) {
     let mut blog = match Blog::new(current_dir()) {
         Ok(b) => b,
         Err(e) => {
@@ -90,7 +91,7 @@ fn init(post: Option<String>, index: Option<String>) {
             std::process::exit(1);
         }
     };
-    match blog.init(post, index) {
+    match blog.init(core_data, post, index) {
         Ok(_) => println!("Initialised new empty blog"),
         Err(e)  => println!("{}", e)
     }
@@ -118,9 +119,14 @@ fn sync(force: bool) {
 fn main() {
     let args :Vec<String> = env::args().collect();
     let mut init_opts = Options::new();
-    init_opts.optopt("p", "post", "Template for rendering individual posts", 
+    init_opts.reqopt("t", "title", "Blog title: give your blog a name!", "BLOG_TITLE");
+    init_opts.reqopt("u", "home_url", "The home URL where your blog will be hosted,
+    for example https://myblog.com", "HOME_URL");
+    init_opts.reqopt("d", "desc", "Describe your blog", "BLOG_DESCRIPTION");
+    init_opts.reqopt("a", "author", "Who are you? Please give your name. This will be make public in the RSS feed", "BLOG_AUTHOR");
+    init_opts.optopt("p", "post", "(Optional) Template for rendering individual posts", 
                      "POST_TEMPLATE");
-    init_opts.optopt("i", "index", "Template for rendering the table of contents", 
+    init_opts.optopt("i", "index", "(Optional) Template for rendering the table of contents", 
                      "INDEX_TEMPLATE");
 
     if args.len() == 1 {
@@ -149,7 +155,18 @@ fn main() {
                 std::process::exit(1);
             }
         };
-        init(matches.opt_str("post"), matches.opt_str("index"));
+        let core_data = match CoreData::new(
+            &matches.opt_str("title").unwrap(),
+            &matches.opt_str("home_url").unwrap(),
+            &matches.opt_str("desc").unwrap(),
+            &matches.opt_str("author").unwrap()) {
+            Ok(d) => d,
+            Err(err) => {
+                println!("{}", err);
+                std::process::exit(1);
+            }
+        };
+        init(core_data, matches.opt_str("post"), matches.opt_str("index"));
     } else {
         eprintln!("I don't recognise this command :(");
     }

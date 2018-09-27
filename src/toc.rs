@@ -7,13 +7,14 @@ use handlebars::Handlebars;
 
 use parser::{html_from_markdown, PostData};
 use templates::{AllTemplates, TemplateError, PATH_POST, PATH_INDEX};
+use rss::{CoreData, RSSError, RssData};
 
 
 #[derive(Debug, PartialEq, Clone, Deserialize, Serialize)]
 pub struct IndexedBlogPost {
     #[serde(skip)]
     path: PathBuf,
-    post_url: String, 
+    pub post_url: String, 
     pub last_updated: SystemTime,
     pub first_published: SystemTime,
     #[serde(skip)]
@@ -146,10 +147,13 @@ pub enum BlogError {
     ReadIndexError(String),
     WriteIndexError(String),
     WriteTocError(String),
+    WriteRssError(String),
     NoInit,
     InitWrite,
     InitTemplate(TemplateError),
-    InitCopy(String)
+    InitCopy(String),
+    HomeURL(String),
+    InitCoreData(RSSError)
 } // TODO: refactor using a single error type and an errorKind
 
 
@@ -164,11 +168,14 @@ impl fmt::Display for BlogError {
             BlogError::ConvertError(err) => write!(f, "Encountered an error while converting: {}", err),
             BlogError::ReadIndexError(err) => write!(f, "Encountered an error while reading the index: {}", err),
             BlogError::WriteTocError(err) => write!(f, "Couldn't write table of contents {}", err),
+            BlogError::WriteRssError(err) => write!(f, "Couldn't write rss feed {}", err),
             BlogError::NoInit => write!(f, "Attempting to sync an uninitialised blog. Please call `init` first"),
             BlogError::InitWrite => write!(f, "Couldn't initialise blog. Do you have write permission?"),
             BlogError::InitTemplate(e) => 
                 write!(f, "Supplied invalid template: {}", e),
+            BlogError::InitCoreData(e) => write!(f, "{}", e),
             BlogError::InitCopy(path) => write!(f, "Couldn't copy template {}. Do you have write permission / does the template exist?", path),
+            BlogError::HomeURL(msg) => write!(f, "{}", msg),
         }
     }
 }
@@ -218,6 +225,11 @@ impl Blog {
         index_path
     }
 
+    fn get_rss_path(&self) -> PathBuf {
+        let mut index_path = self.path.clone(); index_path.push("rss.xml");
+        index_path
+    }
+
     fn load(&mut self) -> Result<(), BlogError> {
         let reader = match ReaderBuilder::new()
             .has_headers(false)
@@ -251,7 +263,7 @@ impl Blog {
         }
     }
 
-    pub fn init(&mut self, post: Option<String>, index: Option<String>) -> Result<(), BlogError> {
+    pub fn init(&mut self, core_data: CoreData, post: Option<String>, index: Option<String>) -> Result<(), BlogError> {
         match fs::File::create(self.get_index_path()) {
             Ok(_) => (),
             _ => {
@@ -273,7 +285,12 @@ impl Blog {
         };
         match &post { Some(s) => self.install_template(s, PATH_POST)?, _ => () };
         match &index { Some(s) => self.install_template(s, PATH_INDEX)?, _ => () };
-        Ok(())
+        match core_data.save() {
+            Err(e) => {
+                return Err(BlogError::InitCoreData(e));
+            }, 
+            Ok(_) => Ok(())
+        }
     }
 
     pub fn sync(&mut self, force: bool) -> Result<usize, BlogError> {
@@ -282,6 +299,7 @@ impl Blog {
 
         if num_updated > 0 || force {
             self.write_toc()?;
+            self.write_rss()?;
             self.persist()?;
         }  // else, no update necessary
         Ok(num_updated)
@@ -323,6 +341,34 @@ impl Blog {
             Ok(_) => Ok(()),
             Err(e) => Err(BlogError::WriteTocError(format!(
                 "Couldn't write to file: {:?}", e)))
+        }
+    }
+
+    fn to_rss_data(&self, core_data: CoreData) -> RssData {
+        let mut rss_data = RssData::new(core_data);
+        rss_data.push_posts(&self.index);
+        rss_data
+    }  
+    // TODO: refactor to avoid all of these unnecessary copies
+
+    fn render_rss(&self) -> Result<String, BlogError> {
+        let core_data = match CoreData::load() {
+            Ok(s) => s,
+            Err(e) => {return Err(BlogError::WriteRssError(
+                format!("Couldn't load core data: {}", e)));}
+        };
+        match self.templates.rss.render("t1", &self.to_rss_data(core_data)) {
+            Ok(s) => Ok(s),
+            Err(e) => Err(BlogError::WriteRssError(
+                format!("Couldn't render template: {}", e)))
+        }
+    }
+    
+    fn write_rss(&self) -> Result<(), BlogError> {
+        match fs::write(self.get_rss_path(), self.render_rss()?) {
+            Ok(_) => Ok(()),
+            Err(e) => Err(BlogError::WriteRssError(format!(
+                "Couldn't write to rss file: {:?}", e)))
         }
     }
 
@@ -594,7 +640,7 @@ mod tests {
         let mut template = Handlebars::new();
         template.register_template_string("t1", "{{#each index}}{{title}}{{/each}}").unwrap();
         // let template = "{{#each index}}{{title}}{{/each}}";
-        blog.set_templates(AllTemplates::from((Handlebars::new(), template)));
+        blog.set_templates(AllTemplates::from((Handlebars::new(), template, Handlebars::new())));
         let rendered = blog.render_index().expect("Couldn't render");
         assert_eq!(rendered, format!("{}", title));
         cleanup(&blog_path);

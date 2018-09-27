@@ -1,6 +1,7 @@
 use std::fmt;
 use std::fs;
 use std::io;
+use std::str::from_utf8;
 use std::time::SystemTime;
 use handlebars::{Handlebars, no_escape};
 use handlebars::{RenderContext, Helper, Context, HelperResult, Output, RenderError};
@@ -8,9 +9,12 @@ use chrono::{DateTime, Utc};
 
 use serde::{Serialize, Deserialize};
 
+use rss::RssData;
+
 
 pub const TOC_TEMPLATE: &[u8]  = include_bytes!("../templates/toc.html");
 pub const POST_TEMPLATE: &[u8]  = include_bytes!("../templates/post.html");
+pub const RSS_TEMPLATE: &[u8]  = include_bytes!("../templates/rss.xml");
 
 pub const PATH_POST: &str = ".post_template.html";
 pub const PATH_INDEX: &str = ".index_template.html";
@@ -47,6 +51,7 @@ impl TemplateError {
 pub struct AllTemplates {
     pub post: Handlebars,
     pub index: Handlebars,
+    pub rss: Handlebars,
 }
 
 
@@ -89,8 +94,13 @@ impl AllTemplates {
             _ => { return Err(unpack_error); }
         };
 
+        let format_str = match h.param(1) {
+            None => "%d %B %Y at %H:%M UTC", // display
+            _ => "%a, %d %b %Y %T UTC", // RSS
+        };
+
         let datetime = DateTime::<Utc>::from(stime);
-        match out.write(&format!("{}", datetime.format("%d %B %Y at %H:%M UTC"))) {
+        match out.write(&format!("{}", datetime.format(format_str))) {
             Ok(_) => Ok(()),
             _ => Err(RenderError::new(
                 "Coultn't write"))
@@ -140,9 +150,30 @@ impl AllTemplates {
         let mut post_template = AllTemplates::make(&post_path, POST_TEMPLATE)?;
         post_template.register_escape_fn(no_escape);
 
+        let rss = match AllTemplates::make_template(match from_utf8(RSS_TEMPLATE) {
+            Ok(s) => s,
+            Err(e) => {
+                return Err(TemplateError{
+                msg: format!("Couldn't read rss template: {}", e),
+                kind: ErrorKind::InvalidSyntax
+            });}
+        }, "rss-path") {
+            Ok(h) => h,
+            Err(e) => {
+                return Err(TemplateError{
+                msg: format!("Couldn't read rss template: {}", e),
+                kind: ErrorKind::InvalidSyntax
+            });}
+        };
+
+        let rss_test = RssData::example();
+
+        AllTemplates::validate::<RssData>(&rss, &rss_test, "rss-path")?;
+
         Ok(AllTemplates{
             post: post_template,
-            index: AllTemplates::make(&index_path, TOC_TEMPLATE)?
+            index: AllTemplates::make(&index_path, TOC_TEMPLATE)?,
+            rss
         })
     }
 
@@ -151,9 +182,13 @@ impl AllTemplates {
     }
 }
 
-impl From<(Handlebars, Handlebars)> for AllTemplates {
-    fn from(templates: (Handlebars, Handlebars)) -> Self {
-        AllTemplates{post: templates.0, index: templates.1}
+impl From<(Handlebars, Handlebars, Handlebars)> for AllTemplates {
+    fn from(templates: (Handlebars, Handlebars, Handlebars)) -> Self {
+        AllTemplates{
+            post: templates.0, 
+            index: templates.1,
+            rss: templates.2
+        }
     }
 }
 
