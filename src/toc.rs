@@ -138,6 +138,19 @@ pub struct Blog {
 }
 
 
+#[derive(Serialize)]
+struct BlogRevIndex<'a> {
+    index: Vec<&'a IndexedBlogPost>
+} // reversed index, for rendering
+
+
+impl<'a> BlogRevIndex<'a> {
+    fn new(index: &'a [IndexedBlogPost]) -> Self {
+        BlogRevIndex{index: index.iter().rev().collect()}
+    }
+}
+
+
 #[derive(Debug)]
 pub enum BlogError {
     CantReadDir(PathBuf, String),
@@ -329,7 +342,7 @@ impl Blog {
 
     // Write table of contents HTML
     fn render_index(&self) -> Result<String, BlogError> {
-        match self.templates.index.render("t1", &self) {
+        match self.templates.index.render("t1", &BlogRevIndex::new(&self.index)) {
             Ok(s) => Ok(s),
             Err(e) => Err(BlogError::WriteTocError(
                 format!("Couldn't render template: {:?}", e)))

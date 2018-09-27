@@ -54,7 +54,7 @@ impl RssData {
     }
 
     pub fn push_posts(&mut self, posts: &[IndexedBlogPost]) {
-        for post in posts {
+        for (i, post) in posts.iter().rev().enumerate() {
             let mut link = self.core_data.home.clone();
             link.set_path(&post.post_url);
             self.posts.push(RssPost{
@@ -62,6 +62,9 @@ impl RssData {
                 first_published: post.first_published,
                 title: post.title.clone()
             });
+            if i == 9 {
+                break;
+            }
         }
     }
 }
