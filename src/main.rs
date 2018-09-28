@@ -83,11 +83,25 @@ fn current_dir() -> PathBuf {
 }
 
 
-fn init(core_data: CoreData, post: Option<String>, index: Option<String>) {
+fn init(title: &str,
+        home_url: &str,
+        description: &str,
+        author: &str,
+        post: Option<String>, 
+        index: Option<String>) {
     let mut blog = match Blog::new(current_dir()) {
         Ok(b) => b,
         Err(e) => {
             println!("{}", e);
+            std::process::exit(1);
+        }
+    };
+    let core_data = match CoreData::new(
+        title, home_url, description, author,
+        &blog.index_url) {
+        Ok(d) => d,
+        Err(err) => {
+            println!("{}", err);
             std::process::exit(1);
         }
     };
@@ -155,18 +169,12 @@ fn main() {
                 std::process::exit(1);
             }
         };
-        let core_data = match CoreData::new(
-            &matches.opt_str("title").unwrap(),
-            &matches.opt_str("home_url").unwrap(),
-            &matches.opt_str("desc").unwrap(),
-            &matches.opt_str("author").unwrap()) {
-            Ok(d) => d,
-            Err(err) => {
-                println!("{}", err);
-                std::process::exit(1);
-            }
-        };
-        init(core_data, matches.opt_str("post"), matches.opt_str("index"));
+    init(&matches.opt_str("title").unwrap(),
+         &matches.opt_str("home_url").unwrap(),
+         &matches.opt_str("desc").unwrap(),
+         &matches.opt_str("author").unwrap(),
+         matches.opt_str("post"), 
+         matches.opt_str("index"));
     } else {
         eprintln!("I don't recognise this command :(");
     }

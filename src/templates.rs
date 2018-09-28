@@ -96,7 +96,7 @@ impl AllTemplates {
 
         let format_str = match h.param(1) {
             None => "%d %B %Y at %H:%M UTC", // display
-            _ => "%a, %d %b %Y %T UTC", // RSS
+            _ => "%a, %d %b %Y %T GMT", // RSS
         };
 
         let datetime = DateTime::<Utc>::from(stime);

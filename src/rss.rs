@@ -44,7 +44,7 @@ pub struct RssData {
 impl RssData {
     pub fn example() -> Self {
         RssData{
-            core_data: CoreData::new("bla", "https://bla.com", "2", "3").unwrap(),
+            core_data: CoreData::new("bla", "https://bla.com", "2", "3", "5").unwrap(),
             posts: vec![RssPost::example()]
         }
     }
@@ -76,7 +76,9 @@ pub struct CoreData {
     #[serde(with = "url_serde")]
     home: Url,
     description: String,
-    author: String
+    author: String,
+    #[serde(with = "url_serde")]
+    index_url: Url
 }
 
 
@@ -117,14 +119,17 @@ impl CoreData {
     }
     
     pub fn new(title: &str, home_s: &str, 
-           description: &str, author: &str) -> Result<Self, RSSError> {
+           description: &str, author: &str,
+           blog_path: &str) -> Result<Self, RSSError> {
         match Url::parse(home_s) {
             Ok(home) => if home.path().len() <= 1 {
+                let mut index_url = home.clone();
+                index_url.set_path(blog_path);
                 Ok(CoreData{
                     title: title.to_string(),
                     description: description.to_string(),
                     author: author.to_string(),
-                    home
+                    home, index_url
                 })
             } else {
                 Err(RSSError{
@@ -184,9 +189,9 @@ mod test {
 
     #[test]
     fn can_set() {
-        assert!(CoreData::new("a", "b", "c", "d").is_err());
-        assert!(CoreData::new("a", "https://example.com/some-path", "c", "d").is_err());
-        assert_eq!(CoreData::new("a", "https://example.com/", "c", "d")
+        assert!(CoreData::new("a", "b", "c", "d", "e").is_err());
+        assert!(CoreData::new("a", "https://example.com/some-path", "c", "d", "e").is_err());
+        assert_eq!(CoreData::new("a", "https://example.com/", "c", "d", "e")
                    .expect("Can't create new coredata").home,
                    Url::parse("https://example.com/").unwrap());
     }

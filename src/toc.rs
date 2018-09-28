@@ -1,5 +1,6 @@
 use std::fmt;
 use std::fs;
+use std::fs::OpenOptions;
 use std::path::PathBuf;
 use std::time::SystemTime;
 use csv::{WriterBuilder, ReaderBuilder};
@@ -132,7 +133,7 @@ impl IndexedBlogPost {
 pub struct Blog {
     index: Vec<IndexedBlogPost>,
     path: PathBuf,
-    index_url: String,
+    pub index_url: String,
     #[serde(skip)]
     templates: AllTemplates
 }
@@ -277,7 +278,8 @@ impl Blog {
     }
 
     pub fn init(&mut self, core_data: CoreData, post: Option<String>, index: Option<String>) -> Result<(), BlogError> {
-        match fs::File::create(self.get_index_path()) {
+        match OpenOptions::new().append(true).create(true).open(self.get_index_path()) {
+        // match fs::File::create(self.get_index_path()) {
             Ok(_) => (),
             _ => {
                 return Err(BlogError::InitWrite);

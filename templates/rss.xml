@@ -1,18 +1,24 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<rss version="2.0" xmlns:content="http://purl.org/rss/1.0/modules/content/">
+<rss version="2.0" 
+    xmlns:content="http://purl.org/rss/1.0/modules/content/" 
+    xmlns:dc="http://purl.org/dc/elements/1.1/" 
+    xmlns:atom="http://www.w3.org/2005/Atom">
     <channel>
         {{#with core_data}}
 		<title>{{title}}</title>
-		<link>{{home}}</link>
+		<link>{{index_url}}</link>
         <description>{{description}}</description>
+        <atom:link href="{{index_url}}rss.xml" rel="self" type="application/rss+xml" />
         {{/with}}
         {{#each posts}}
         <item>
             <title>{{title}}</title>
             <link>{{link}}</link>
-            <author>{{author}}</author>
+            <guid>{{link}}</guid>
+            <dc:creator>{{author}}</dc:creator>
             <pubDate>{{as-date first_published rss}}</pubDate>
         </item>
         {{/each}}
     </channel>
 </rss>
+
