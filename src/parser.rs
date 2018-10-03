@@ -165,7 +165,8 @@ pub struct PostData<'a> {
     title: Option<String>,
     first_published: SystemTime,
     last_updated: SystemTime,
-    index_url: String
+    index_url: String,
+    post_url: String
 }
 
 
@@ -176,7 +177,8 @@ impl<'a> PostData<'a> {
             article, title: None,
             first_published: SystemTime::now(),
             last_updated: SystemTime::now(),
-            index_url: "/".to_string()
+            index_url: "/".to_string(),
+            post_url: "/".to_string(),
         }
     }
 
@@ -190,9 +192,9 @@ impl<'a> PostData<'a> {
 }
 
 
-impl<'a, 'b, 'c> From<(&'a str, &'b mut IndexedBlogPost, &'c str)> for PostData<'a> {
+impl<'a, 'b, 'c> From<(&'a str, &'b mut IndexedBlogPost, &'c str, String)> for PostData<'a> {
 
-    fn from(a: (&'a str, &'b mut IndexedBlogPost, &'c str)) -> Self {
+    fn from(a: (&'a str, &'b mut IndexedBlogPost, &'c str, String)) -> Self {
         PostData{
             article: a.0,
             first_published: a.1.first_published,
@@ -201,7 +203,8 @@ impl<'a, 'b, 'c> From<(&'a str, &'b mut IndexedBlogPost, &'c str)> for PostData<
             title: match a.1.title {
                 Some(ref t) => Some(html_escape(t)),
                 None => None
-            }
+            },
+            post_url: a.3
         }
     }
 }
