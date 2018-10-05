@@ -16,8 +16,10 @@ pub struct SidenoteParser<'a> {
     pub title: &'a mut Option<String>,
     pub in_title: bool,
     pub in_image: bool,
-    pub remaining_events: Vec<Event<'a>>
+    pub remaining_events: Vec<Event<'a>>,
+    pub sidenotes: &'a mut Vec<String>
 }
+
 
 
 /// The main wrapper for pulldown_cmark events.
@@ -30,7 +32,9 @@ pub struct SidenoteParser<'a> {
 /// code block, so as not to parse for sidenotes in that case
 /// * returns the other events unchanged.
 impl<'a> SidenoteParser<'a> {
-    pub fn new(parser: Parser<'a>, title: &'a mut Option<String>) -> SidenoteParser<'a> {
+    pub fn new(parser: Parser<'a>, 
+               title: &'a mut Option<String>, 
+               sidenotes: &'a mut Vec<String>) -> SidenoteParser<'a> {
         SidenoteParser{
             parser,
             title,
@@ -40,7 +44,8 @@ impl<'a> SidenoteParser<'a> {
             remaining_text: String::from(""),
             in_title: false,
             in_image: false,
-            remaining_events: vec![]
+            remaining_events: vec![],
+            sidenotes
         }
     }
 
@@ -62,6 +67,7 @@ impl<'a> SidenoteParser<'a> {
         Event<'a> {
         if self.in_sidenote_block {
             if start {
+                self.sidenotes.last_mut().unwrap().push_str("\n\n");
                 Event::InlineHtml(Cow::from("<br /><br />\n"))
             } else { // create empty event
                 Event::Text(Cow::from(""))
@@ -160,13 +166,26 @@ impl<'a> Iterator for SidenoteParser<'a> {
 
 
 #[derive(Serialize)]
+struct Sidenote {
+    note: String
+}
+
+impl From<String> for Sidenote {
+    fn from(note: String) -> Self {
+        Sidenote{note}
+    }
+}
+
+
+#[derive(Serialize)]
 pub struct PostData<'a> {
     article: &'a str,
     title: Option<String>,
     first_published: SystemTime,
     last_updated: SystemTime,
     index_url: String,
-    post_url: String
+    post_url: String,
+    sidenotes: Vec<Sidenote>
 }
 
 
@@ -179,6 +198,7 @@ impl<'a> PostData<'a> {
             last_updated: SystemTime::now(),
             index_url: "/".to_string(),
             post_url: "/".to_string(),
+            sidenotes: vec![]
         }
     }
 
@@ -192,9 +212,13 @@ impl<'a> PostData<'a> {
 }
 
 
-impl<'a, 'b, 'c> From<(&'a str, &'b mut IndexedBlogPost, &'c str, String)> for PostData<'a> {
+impl<'a, 'b, 'c> From<(&'a str, 
+                       &'b mut IndexedBlogPost, 
+                       &'c str, 
+                       String, 
+                       Vec<String>)> for PostData<'a> {
 
-    fn from(a: (&'a str, &'b mut IndexedBlogPost, &'c str, String)) -> Self {
+    fn from(a: (&'a str, &'b mut IndexedBlogPost, &'c str, String, Vec<String>)) -> Self {
         PostData{
             article: a.0,
             first_published: a.1.first_published,
@@ -204,7 +228,10 @@ impl<'a, 'b, 'c> From<(&'a str, &'b mut IndexedBlogPost, &'c str, String)> for P
                 Some(ref t) => Some(html_escape(t)),
                 None => None
             },
-            post_url: a.3
+            post_url: a.3,
+            sidenotes: a.4.into_iter()
+                .map(Sidenote::from)
+                .collect()
         }
     }
 }
@@ -213,7 +240,8 @@ impl<'a, 'b, 'c> From<(&'a str, &'b mut IndexedBlogPost, &'c str, String)> for P
 
 pub struct ParsedMarkdown {
     pub html: String,
-    pub title: Option<String>
+    pub title: Option<String>,
+    pub sidenotes: Vec<String>
 }
 
 
@@ -221,8 +249,9 @@ pub struct ParsedMarkdown {
 pub fn html_from_markdown(md: &str, link_prefix: String) -> Result<ParsedMarkdown, SidenoteError> {
     let mut title: Option<String> = None;
     let mut article = "<article>".to_string();
+    let mut sidenotes: Vec<String> = vec![];
     {
-        let mut parser = SidenoteParser::new(Parser::new(md), &mut title);
+        let mut parser = SidenoteParser::new(Parser::new(md), &mut title, &mut sidenotes);
         parser.set_link_prefix(link_prefix);
         for event in parser {
             html::push_html(&mut article, vec![event?].into_iter());
@@ -239,7 +268,7 @@ pub fn html_from_markdown(md: &str, link_prefix: String) -> Result<ParsedMarkdow
         None => None
     };
 
-    Ok(ParsedMarkdown{html: article, title})
+    Ok(ParsedMarkdown{html: article, title, sidenotes})
 
 } 
 
@@ -314,6 +343,13 @@ spanning multiple lines, which is also supported
 "#;
 
         let html_buf = html_from_markdown(markdown_str, "".to_string()).expect("Should succeed");
+
+        assert_eq!(html_buf.sidenotes, vec![" a sidenote 
+
+spanning multiple lines, which is also supported 
+
+ "]);
+
         assert_eq!(
             html_buf.html,
             r#"<article>
@@ -335,7 +371,7 @@ spanning multiple lines, which is also supported<br /><br />
 hello
 =====
 
-Here is some text with {sidenotes}.
+Here is some text with {sidenotes} and {sidenotes}.
 
 * alpha
 * beta
@@ -350,12 +386,13 @@ code_with{
 
 "#;
         let html_buf = html_from_markdown(markdown_str, "".to_string()).expect("Shouldn't fail!");
+        assert_eq!(html_buf.sidenotes, vec!["sidenotes ", "sidenotes "]);
 
         assert_eq!(
             html_buf.html,
             r#"<article>
 <h1>hello</h1><section>
-<p>Here is some text with <label class="sidenote-number"></label><span class="sidenote">sidenotes</span>.</p>
+<p>Here is some text with <label class="sidenote-number"></label><span class="sidenote">sidenotes</span> and <label class="sidenote-number"></label><span class="sidenote">sidenotes</span>.</p>
 <ul>
 <li>alpha</li>
 <li>beta</li>
@@ -378,8 +415,9 @@ hello & hello
 Here is some text with {sidenotes}.
 "#;
         let mut title: Option<String> = None;
+        let mut sidenotes: Vec<String> = vec![];
         {
-            let parser = SidenoteParser::new(Parser::new(md), &mut title);
+            let parser = SidenoteParser::new(Parser::new(md), &mut title, &mut sidenotes);
             for _ in parser {}
         }
         assert_eq!(title.expect("Should work, even with ampersands!"), "hello & hello")

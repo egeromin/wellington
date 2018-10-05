@@ -60,7 +60,8 @@ fn convert(input_filename: &str, output_filename: &str) {
     let mut bp = IndexedBlogPost::example();
     bp.set_title(&output.title);
 
-    let data = PostData::from((output.html.as_str(), &mut bp, "", "".to_string()));
+    let data = PostData::from((output.html.as_str(), &mut bp, "", "".to_string(),
+        output.sidenotes));
     let rendered = match data.render(&template) {
         Ok(ht) => ht,
         Err(err) => {

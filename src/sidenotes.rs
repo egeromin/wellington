@@ -23,10 +23,18 @@ impl<'a> SidenoteParser<'a> {
                 assert_eq!(m.start() + 1, m.end());
                 let first = text[..m.start()].to_string();
                 self.remaining_text = text[m.start()..].to_string();
+                if self.in_sidenote_block {
+                    self.sidenotes.last_mut().unwrap().push_str(&first);
+                    self.sidenotes.last_mut().unwrap().push_str(" ");
+                }
                 Event::Text(Cow::from(first))
             },
             None => {
                 self.remaining_text = "".to_string();
+                if self.in_sidenote_block {
+                    self.sidenotes.last_mut().unwrap().push_str(&text);
+                    self.sidenotes.last_mut().unwrap().push_str(" ");
+                }
                 Event::Text(Cow::from(text.to_string()))
                 // can I avoid this pointless copy?
                 // how do I tell the compiler that if I return, then
@@ -57,6 +65,7 @@ impl<'a> SidenoteParser<'a> {
                     Err(SidenoteError::Nested)
                 } else {
                     self.in_sidenote_block = true;
+                    self.sidenotes.push("".to_string());
                     Ok(Event::InlineHtml(Cow::from(START_SIDENOTE)))
                 }
             },
@@ -122,7 +131,8 @@ mod tests {
     fn can_get_first_sidenote() {
         let text = "here is some text {with sidenotes}"; 
         let mut title: Option<String> = None;
-        let mut parser = SidenoteParser::new(Parser::new(""), &mut title);
+        let mut sidenotes: Vec<String> = vec![];
+        let mut parser = SidenoteParser::new(Parser::new(""), &mut title, &mut sidenotes);
         assert_eq!(parser.parse_first_sidenote(Cow::from(text)),
             Event::Text(Cow::from("here is some text ")));
     }
@@ -130,7 +140,8 @@ mod tests {
     #[test]
     fn can_parse_remaining() {
         let mut title: Option<String> = None;
-        let mut parser = SidenoteParser::new(Parser::new(""), &mut title);
+        let mut sidenotes: Vec<String> = vec![];
+        let mut parser = SidenoteParser::new(Parser::new(""), &mut title, &mut sidenotes);
         parser.remaining_text = String::from("some remaining { text");
         let mut event = parser.parse_remaining_text().unwrap();
         assert_eq!(event, Event::Text(Cow::from("some remaining ")));

@@ -108,7 +108,8 @@ impl IndexedBlogPost {
             };
             self.title = output.title;
             let post_url = self.post_url.clone();
-            let data = PostData::from((output.html.as_str(), self, index_url, post_url));
+            let data = PostData::from((output.html.as_str(), self, index_url, post_url, 
+                                       output.sidenotes));
             let rendered = match data.render(template) {
                 Ok(ht) => ht,
                 Err(err) => {
