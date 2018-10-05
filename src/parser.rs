@@ -79,7 +79,7 @@ impl<'a> SidenoteParser<'a> {
     }
 
     fn start_codeblock() -> Event<'a> {
-        Event::InlineHtml(Cow::from("<pre><code class=\"code\">"))
+        Event::InlineHtml(Cow::from("<pre class=\"code\"><code>"))
     }
 
     fn link_is_relative(link: &Cow<str>) -> bool {
@@ -361,7 +361,7 @@ code_with{
 <li>beta</li>
 </ul>
 <p>And also some <code>inline_code</code> as well as</p>
-<pre><code class="code">code_with{
+<pre class="code"><code>code_with{
     curly_braces();
 }
 </code></pre>
