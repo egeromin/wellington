@@ -1,10 +1,12 @@
 extern crate getopts;
 extern crate wellington;
+extern crate handlebars;
 
 use std::env;
 use std::fs;
 use std::path::PathBuf;
 use getopts::Options;
+use handlebars::no_escape;
 
 use wellington::{html_from_markdown, Blog, PostData, IndexedBlogPost};
 use wellington::templates::{AllTemplates, POST_TEMPLATE};
@@ -33,7 +35,7 @@ Where command is one of:
 fn convert(input_filename: &str, output_filename: &str) {
     let input = fs::read_to_string(input_filename).expect("Error reading input file");
     let post_template = String::from_utf8_lossy(POST_TEMPLATE);
-    let template = match AllTemplates::make_template(&post_template, "default-template") {
+    let mut template = match AllTemplates::make_template(&post_template, "default-template") {
         Ok(t) => t,
         Err(e) => {
             eprintln!("{}", e);
@@ -41,6 +43,7 @@ fn convert(input_filename: &str, output_filename: &str) {
         }
     };
     let article = "some article";
+    template.register_escape_fn(no_escape);
     match AllTemplates::validate::<PostData<'static>>(&template, 
                                                       &PostData::new(&article),
                                                       "default-path") {
