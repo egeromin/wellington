@@ -70,6 +70,19 @@ as an example. To work, they require proper CSS. See the 'CSS'
 section below.
 
 
+
+
+
+## Why Wellington
+
+There are plenty of blogging engines out there, many designed for use with
+static hosting services like GitHub pages. One great example is
+[Jekyll](https://jekyllrb.com/).
+
+I wrote wellington because I wanted support for sidenotes and require only a
+very simple set of features.
+
+
 ## Relative links
 
 Relative links in the post markdown files are automatically changed to point to the directory they're in. So for example, if `my-amazing-blog/post-1/index.md` contains the following:
@@ -87,31 +100,19 @@ Then this is rendered as:
 This makes embedding images in the blog post easier.
 
 
-
-## Why Wellington
-
-There are plenty of blogging engines out there, many designed for use with
-static hosting services like GitHub pages. One great example is
-[Jekyll](https://jekyllrb.com/)
-
-I wrote wellington because I wanted support for sidenotes and required only a
-very simple set of features.
-
-
-
 ## CSS 
 
 Wellington's sidenotes were designed for use with
-[tufte-css](https://github.com/edwardtufte/tufte-css). I use a modified version on [my blog](https://emanuelgeromin.com/blog/tufte.css). This modified version is more mobile friendly and on narrow screens, instead of displaying sidenotes, displays footnotes. Note that this requires proper configuration in order to work. You're very welcome to copy my CSS, but, at the very least, you should hide the sidenotes if you don't require them and render only the footnotes:
+[tufte-css](https://github.com/edwardtufte/tufte-css). I use a modified version on [my blog](https://emanuelgeromin.com/blog/tufte.css). This modified version is more mobile friendly and on narrow screens, instead of displaying sidenotes, displays footnotes. You're very welcome to copy my CSS. Alternatively, as a more minimal solution, you can just hide the sidenotes if you don't require them and render only the footnotes:
 
 ```css
-.sidenotes {
+.sidenote {
     display: none;
 }
 ```
 
-To provide sidenotes for desktop and footnotes for mobile, as I've done, please
-check the modified version of tufte-css that I linked to.
+To display the blog posts in a mobile friendly way, by using sidenotes for desktop and footnotes for mobile, as I've done, please
+check the [modified version of tufte-css](https://emanuelgeromin.com/blog/tufte.css).
 
 
 ## Templates
@@ -131,8 +132,8 @@ Take a look at the default templates and adapt them to suit your needs!
 
 ## MathJax (Latex) support
 
-Using mathjax (latex) in the blog posts requires a hack. To prevent any latex
-to be rendered by the markdown parser, it will have to be wrapped in code tags,
+Using mathjax (latex) in the blog posts requires a hack. To prevent the latex
+to be rendered by the markdown parser, it has to be marked as code in markdown,
 for example
 
 ```markdown

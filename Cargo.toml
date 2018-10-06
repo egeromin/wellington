@@ -3,7 +3,7 @@ name = "wellington"
 version = "0.0.1"
 authors = ["Emanuel Geromin <egeromin@gmail.com>"]
 description = "A lightweight blogging engine using markdown and supporting sidenotes"
-license = "CC0"
+license = "CC0-1.0"
 
 [dependencies]
 pulldown-cmark = "0.1.2"
